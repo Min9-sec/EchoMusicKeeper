@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "node node_modules/esbuild/bin/esbuild src/index.js --bundle --format=esm --target=chrome120 --outfile=plugin/index.js",
+    "build": "node scripts/build.js",
     "test": "node --test test/*.test.js",
     "syntax": "node --check src/index.js && node --check plugin/index.js",
     "verify:package": "node scripts/verify-package.js",
