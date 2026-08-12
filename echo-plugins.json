@@ -1,0 +1,12 @@
+{
+  "name": "EchoMusicKeeper 插件源",
+  "homepage": "https://github.com/Min9-sec/EchoMusicKeeper",
+  "plugins": [
+    {
+      "id": "echo-music-keeper",
+      "path": "",
+      "homepage": "https://github.com/Min9-sec/EchoMusicKeeper",
+      "tags": ["audio", "cache", "download", "offline", "windows"]
+    }
+  ]
+}

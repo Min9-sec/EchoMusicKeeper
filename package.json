@@ -1,0 +1,16 @@
+{
+  "name": "echo-music-keeper",
+  "private": true,
+  "version": "0.1.3",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.js --bundle --format=esm --target=chrome120 --outfile=index.js",
+    "test": "node --test test/*.test.js",
+    "syntax": "node --check src/index.js && node --check index.js",
+    "check": "npm test && npm run build && npm run syntax"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
