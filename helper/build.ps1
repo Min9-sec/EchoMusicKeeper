@@ -13,7 +13,9 @@ $ldflags = "-s -w -X main.version=$version"
 $env:CGO_ENABLED = "0"
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
-$output = Join-Path $PSScriptRoot "..\bin\echo-music-keeper-helper.exe"
+$outputDirectory = Join-Path $PSScriptRoot "..\plugin\bin"
+$output = Join-Path $outputDirectory "echo-music-keeper-helper.exe"
+New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 Push-Location $PSScriptRoot
 try {
   go build -buildvcs=false -trimpath -ldflags $ldflags -o $output ./cmd/echo-music-keeper-helper

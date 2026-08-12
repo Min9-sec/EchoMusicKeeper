@@ -5,10 +5,11 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/index.js --bundle --format=esm --target=chrome120 --outfile=index.js",
+    "build": "node node_modules/esbuild/bin/esbuild src/index.js --bundle --format=esm --target=chrome120 --outfile=plugin/index.js",
     "test": "node --test test/*.test.js",
-    "syntax": "node --check src/index.js && node --check index.js",
-    "check": "npm test && npm run build && npm run syntax"
+    "syntax": "node --check src/index.js && node --check plugin/index.js",
+    "verify:package": "node scripts/verify-package.js",
+    "check": "npm test && npm run build && npm run syntax && npm run verify:package"
   },
   "devDependencies": {
     "esbuild": "^0.28.1"

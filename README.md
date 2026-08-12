@@ -10,7 +10,9 @@ EchoMusicKeeper 是面向 Windows 弱网络环境的 EchoMusic 插件：普通�
 https://github.com/Min9-sec/EchoMusicKeeper
 ```
 
-随后在插件列表中安装并启用 EchoMusicKeeper。也可以在“插件管理”中打开本地插件目录，将本仓库全部文件直接复制为 `echo-music-keeper` 文件夹后启用。
+随后在插件列表中安装并启用 EchoMusicKeeper。在线安装只会提取仓库中的 `plugin` 运行目录，不会把源码和测试复制到本地插件目录。
+
+也可以下载 GitHub Release 中的 Windows x64 ZIP 并解压到本地插件目录，或在“插件管理”中打开本地插件目录，将本仓库的 `plugin` 目录复制为 `echo-music-keeper` 文件夹后启用。
 
 ## 要求与首次运行
 
@@ -51,4 +53,12 @@ go test ./...
 ./build.ps1
 ```
 
-`build.ps1` 需要 PowerShell、Go 1.25.4，并生成 Windows x64 的 `bin/echo-music-keeper-helper.exe`。
+`build.ps1` 需要 PowerShell、Go 1.25.4，并生成 Windows x64 的 `plugin/bin/echo-music-keeper-helper.exe`。`npm run check` 会验证 `plugin` 目录只包含安装所需文件。
+
+## 发布
+
+推送与 `package.json` 和 `plugin/manifest.json` 版本一致的 `vX.Y.Z` Tag 后，GitHub Actions 会运行完整检查并创建正式 Release。Release 包根目录可直接作为 EchoMusic 插件目录使用，同时附带 SHA-256 校验文件。
+
+## 致谢
+
+致敬并感谢 [EchoMusic](https://github.com/hoowhoami/EchoMusic) 项目。本插件基于 EchoMusic 提供的插件能力构建。
