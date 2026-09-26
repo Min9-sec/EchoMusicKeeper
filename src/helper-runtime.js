@@ -1,5 +1,6 @@
 import { toHelperConfig } from "./config.js";
 import { createHelperClient } from "./helper-client.js";
+import { detectPlatform, helperExecutable, pathSeparator } from "./platform.js";
 
 const PORT_MIN = 49152;
 const PORT_COUNT = 65535 - PORT_MIN + 1;
@@ -32,6 +33,9 @@ function waitForAbort(promise, signal) {
 export function createHelperRuntime(ctx, options = {}) {
   const pluginRoot = String(ctx?.descriptor?.directory ?? "");
   const settings = options.settings ?? {};
+  const platform = String(options.platform ?? detectPlatform(options.environment ?? ctx, globalThis));
+  const executable = helperExecutable(platform);
+  const separator = pathSeparator(platform);
   const clientFactory = options.clientFactory ?? ((clientOptions) => createHelperClient({
     ...clientOptions,
     fetchImpl: options.fetchImpl,
@@ -102,6 +106,7 @@ export function createHelperRuntime(ctx, options = {}) {
     const initialConfig = toHelperConfig(settings, {
       pluginRoot,
       defaultMusicRoot: "",
+      separator,
       ...paths,
     });
     const seenPorts = new Set();
@@ -121,7 +126,7 @@ export function createHelperRuntime(ctx, options = {}) {
         let launchResult;
         try {
           launchResult = await ctx.process.launch({
-            executable: "bin/echo-music-keeper-helper.exe",
+            executable,
             args: [
               "--port", String(port), "--token", token,
               "--plugin-root", pluginRoot,
@@ -150,7 +155,7 @@ export function createHelperRuntime(ctx, options = {}) {
         }
         defaultMusicRoot = String(health.defaultMusicPath ?? defaultMusicRoot);
         try {
-          await client.updateConfig(toHelperConfig(settings, { pluginRoot, defaultMusicRoot, ...paths }));
+          await client.updateConfig(toHelperConfig(settings, { pluginRoot, defaultMusicRoot, separator, ...paths }));
         } catch {
           await terminate(entry);
           continue;
@@ -225,6 +230,9 @@ export function createHelperRuntime(ctx, options = {}) {
     status: () => ({ ...currentStatus }),
     get client() { return onlineClient; },
     get pluginRoot() { return pluginRoot; },
+    get platform() { return platform; },
+    get pathSeparator() { return separator; },
+    get executable() { return executable; },
     get defaultMusicRoot() { return defaultMusicRoot; },
   });
 }

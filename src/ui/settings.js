@@ -30,6 +30,7 @@ export function createSettingsComponent(ctx, runtime, settingsRef) {
         const managedDownloadRoots = [...new Set([normalized.downloadRoot, ...completedDownloadPaths.map(parentPath)].filter(Boolean))];
         await runtime?.client?.updateConfig?.(toHelperConfig(normalized, {
           pluginRoot: runtime?.pluginRoot ?? "", defaultMusicRoot: runtime?.defaultMusicRoot ?? "",
+          separator: runtime?.pathSeparator ?? "\\",
           managedDownloadRoots, completedDownloadPaths,
         }));
       };
@@ -50,7 +51,7 @@ export function createSettingsComponent(ctx, runtime, settingsRef) {
         const custom = String(settingsRef.value.cacheRoot ?? "").trim();
         if (custom) return custom;
         const pluginRoot = String(runtime?.pluginRoot ?? "").trim().replace(/[\\/]$/, "");
-        return pluginRoot ? `${pluginRoot}\\cache` : "正在检测插件目录";
+        return pluginRoot ? `${pluginRoot}${runtime?.pathSeparator ?? "\\"}cache` : "正在检测插件目录";
       };
       const downloadLocation = () => String(settingsRef.value.downloadRoot || runtime?.defaultMusicRoot || "正在检测默认音乐目录").trim();
       const changeCacheLimit = (event) => {

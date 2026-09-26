@@ -5,6 +5,7 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -48,26 +49,89 @@ jobs:
           go test -race ./...
           go vet ./...
           GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=darwin GOARCH=amd64 go vet ./...
+          GOOS=darwin GOARCH=arm64 go vet ./...
 
       - name: Rebuild Windows helper
-        working-directory: helper
-        run: |
-          version=$(node -p 'require("../package.json").version')
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
-            -buildvcs=false -trimpath \
-            -ldflags "-s -w -X main.version=${version}" \
-            -o ../plugin/bin/echo-music-keeper-helper.exe \
-            ./cmd/echo-music-keeper-helper
+        run: ./helper/build-windows.sh
 
       - name: Verify committed runtime artifacts
         run: |
           npm run verify:package
           git diff --exit-code -- plugin/index.js plugin/bin/echo-music-keeper-helper.exe
 
+  helper-macos:
+    name: Verify and rebuild the macOS helper
+    runs-on: macos-latest
+    env:
+      GOFLAGS: -buildvcs=false
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.4"
+          cache-dependency-path: helper/go.mod
+
+      - name: Test and vet helper on macOS
+        working-directory: helper
+        run: |
+          go test ./...
+          go test -race ./...
+          go vet ./...
+
+      - name: Test and rebuild JavaScript on macOS
+        run: |
+          npm ci
+          npm test
+          npm run build
+          npm run syntax
+          npm run verify:package
+
+      - name: Rebuild universal macOS helper
+        run: ./helper/build-macos.sh
+
+      - name: Verify committed macOS helper
+        run: |
+          helper=plugin/bin/echo-music-keeper-helper-macos
+          test -x "$helper"
+          archs=$(lipo -archs "$helper")
+          printf '%s\n' "$archs" | tr ' ' '\n' | grep -qx arm64
+          printf '%s\n' "$archs" | tr ' ' '\n' | grep -qx x86_64
+          codesign --verify --strict "$helper"
+          version=$(node -p 'require("./package.json").version')
+          go version -m "$helper" | grep -q "github.com/Min9-sec/EchoMusicKeeper/helper/cmd/echo-music-keeper-helper"
+          go version -m "$helper" | grep -q 'GOOS=darwin'
+          status=0
+          message=$(./"$helper" 2>&1) || status=$?
+          test "$status" -eq 1
+          printf '%s' "$message" | grep -q -- "--port must be between 1 and 65535"
+          if ! git diff --exit-code -- "$helper"; then
+            echo "::error::The committed macOS helper ($version) differs from the helper rebuilt by this run. Download the echo-music-keeper-helper-macos artifact of this run and commit it as $helper."
+            exit 1
+          fi
+          echo "verified universal macOS helper ${version}"
+
+      - name: Upload rebuilt macOS helper
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-music-keeper-helper-macos
+          path: plugin/bin/echo-music-keeper-helper-macos
+          if-no-files-found: error
+
   release:
     name: Publish tagged plugin package
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: verify
+    needs: [verify, helper-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -102,34 +166,45 @@ jobs:
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          archive="EchoMusicKeeper-${TAG_NAME}-windows-x64.zip"
+          windows_archive="EchoMusicKeeper-${TAG_NAME}-windows-x64.zip"
+          macos_archive="EchoMusicKeeper-${TAG_NAME}-macos-universal.zip"
           (
             cd plugin
-            zip -9 "../${archive}" LICENSE manifest.json index.js icon.svg bin/echo-music-keeper-helper.exe
+            zip -9 "../${windows_archive}" LICENSE manifest.json index.js icon.svg bin/echo-music-keeper-helper.exe
+            zip -9 "../${macos_archive}" LICENSE manifest.json index.js icon.svg bin/echo-music-keeper-helper-macos
           )
-          archive_hash=$(sha256sum "$archive" | cut -d ' ' -f 1)
-          helper_hash=$(sha256sum plugin/bin/echo-music-keeper-helper.exe | cut -d ' ' -f 1)
-          printf '%s  %s\n' "$archive_hash" "$archive" > SHA256SUMS.txt
-          printf '%s  %s\n' "$helper_hash" "bin/echo-music-keeper-helper.exe" >> SHA256SUMS.txt
+          windows_hash=$(sha256sum "$windows_archive" | cut -d ' ' -f 1)
+          macos_hash=$(sha256sum "$macos_archive" | cut -d ' ' -f 1)
+          windows_helper_hash=$(sha256sum plugin/bin/echo-music-keeper-helper.exe | cut -d ' ' -f 1)
+          macos_helper_hash=$(sha256sum plugin/bin/echo-music-keeper-helper-macos | cut -d ' ' -f 1)
+          {
+            printf '%s  %s\n' "$windows_hash" "$windows_archive"
+            printf '%s  %s\n' "$macos_hash" "$macos_archive"
+            printf '%s  %s\n' "$windows_helper_hash" "bin/echo-music-keeper-helper.exe"
+            printf '%s  %s\n' "$macos_helper_hash" "bin/echo-music-keeper-helper-macos"
+          } > SHA256SUMS.txt
 
       - name: Verify release archive layout
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          archive="EchoMusicKeeper-${TAG_NAME}-windows-x64.zip"
-          expected=$(printf '%s\n' LICENSE manifest.json index.js icon.svg bin/echo-music-keeper-helper.exe | sort)
-          actual=$(zipinfo -1 "$archive" | sort)
-          test "$actual" = "$expected"
-          head -n 1 SHA256SUMS.txt | sha256sum --check
-          tail -n 1 SHA256SUMS.txt | (cd plugin && sha256sum --check)
+          windows_archive="EchoMusicKeeper-${TAG_NAME}-windows-x64.zip"
+          macos_archive="EchoMusicKeeper-${TAG_NAME}-macos-universal.zip"
+          windows_expected=$(printf '%s\n' LICENSE manifest.json index.js icon.svg bin/echo-music-keeper-helper.exe | sort)
+          macos_expected=$(printf '%s\n' LICENSE manifest.json index.js icon.svg bin/echo-music-keeper-helper-macos | sort)
+          test "$(zipinfo -1 "$windows_archive" | sort)" = "$windows_expected"
+          test "$(zipinfo -1 "$macos_archive" | sort)" = "$macos_expected"
+          sed -n '1,2p' SHA256SUMS.txt | sha256sum --check
+          sed -n '3,4p' SHA256SUMS.txt | (cd plugin && sha256sum --check)
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          archive="EchoMusicKeeper-${TAG_NAME}-windows-x64.zip"
-          gh release create "$TAG_NAME" "$archive" SHA256SUMS.txt \
+          windows_archive="EchoMusicKeeper-${TAG_NAME}-windows-x64.zip"
+          macos_archive="EchoMusicKeeper-${TAG_NAME}-macos-universal.zip"
+          gh release create "$TAG_NAME" "$windows_archive" "$macos_archive" SHA256SUMS.txt \
             --verify-tag \
             --generate-notes \
             --title "EchoMusicKeeper ${TAG_NAME}"

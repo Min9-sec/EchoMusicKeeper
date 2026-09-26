@@ -62,7 +62,7 @@ type handler struct {
 func New(options Options) http.Handler {
 	launch := options.LaunchProcess
 	if launch == nil {
-		launch = launchExplorer
+		launch = launchFileManager
 	}
 	return &handler{
 		tokenHash: sha256.Sum256([]byte(options.Token)), manager: options.Manager,
@@ -484,11 +484,12 @@ func (server *handler) reveal(writer http.ResponseWriter, request *http.Request)
 		server.writeError(writer, http.StatusBadRequest, "reveal_forbidden", "path is not an exact managed target")
 		return
 	}
-	args := []string{target}
-	if body.Kind == "select" {
-		args = []string{"/select," + target}
+	executable, args, err := revealCommand(body.Kind, target)
+	if err != nil {
+		server.internalError(writer, "reveal_failed", err)
+		return
 	}
-	if err := server.launch("explorer.exe", args...); err != nil {
+	if err := server.launch(executable, args...); err != nil {
 		server.internalError(writer, "reveal_failed", err)
 		return
 	}
@@ -634,9 +635,30 @@ func samePath(left, right string) bool {
 	return filepath.Clean(left) == filepath.Clean(right)
 }
 
-func launchExplorer(name string, args ...string) error {
-	if runtime.GOOS != "windows" {
-		return fmt.Errorf("Explorer reveal is only available on Windows")
+// revealCommand returns the platform file manager invocation that selects or
+// opens one already authorized target. Only platforms with a supported file
+// manager receive a command.
+func revealCommand(kind, target string) (string, []string, error) {
+	return revealCommandFor(runtime.GOOS, kind, target)
+}
+
+func revealCommandFor(goos, kind, target string) (string, []string, error) {
+	switch goos {
+	case "windows":
+		if kind == "select" {
+			return "explorer.exe", []string{"/select," + target}, nil
+		}
+		return "explorer.exe", []string{target}, nil
+	case "darwin":
+		if kind == "select" {
+			return "open", []string{"-R", target}, nil
+		}
+		return "open", []string{target}, nil
+	default:
+		return "", nil, fmt.Errorf("file manager reveal is only available on Windows and macOS")
 	}
+}
+
+func launchFileManager(name string, args ...string) error {
 	return exec.Command(name, args...).Start()
 }

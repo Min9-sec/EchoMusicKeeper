@@ -4,12 +4,36 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const EXPECTED_FILES = Object.freeze([
   "LICENSE",
+  "bin/echo-music-keeper-helper-macos",
   "bin/echo-music-keeper-helper.exe",
   "icon.svg",
   "index.js",
   "manifest.json",
 ]);
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+const FAT_MACHO_MAGIC = 0xcafebabe;
+const FAT_MACHO_HEADER_BYTES = 8;
+const FAT_MACHO_ARCH_BYTES = 20;
+const CPU_TYPE_X86_64 = 0x01000007;
+const CPU_TYPE_ARM64 = 0x0100000c;
+const REQUIRED_MACOS_ARCHITECTURES = Object.freeze([CPU_TYPE_ARM64, CPU_TYPE_X86_64]);
+
+/** Returns the architecture slices of a universal Mach-O binary, or null. */
+export function universalMachOArchitectures(executable) {
+  if (executable.length < FAT_MACHO_HEADER_BYTES || executable.readUInt32BE(0) !== FAT_MACHO_MAGIC) return null;
+  const count = executable.readUInt32BE(4);
+  if (count < 1 || executable.length < FAT_MACHO_HEADER_BYTES + count * FAT_MACHO_ARCH_BYTES) return null;
+  const architectures = [];
+  for (let index = 0; index < count; index += 1) {
+    const entry = FAT_MACHO_HEADER_BYTES + index * FAT_MACHO_ARCH_BYTES;
+    const offset = executable.readUInt32BE(entry + 8);
+    const size = executable.readUInt32BE(entry + 12);
+    if (size < 1 || offset + size > executable.length) return null;
+    architectures.push(executable.readUInt32BE(entry));
+  }
+  return architectures;
+}
 
 async function readJSON(filename) {
   return JSON.parse(await readFile(filename, "utf8"));
@@ -63,6 +87,15 @@ export async function verifyPackage(root = path.resolve(path.dirname(fileURLToPa
   const executable = await readFile(path.join(pluginRoot, "bin", "echo-music-keeper-helper.exe"));
   if (executable.length < 2 || executable[0] !== 0x4d || executable[1] !== 0x5a) {
     throw new Error("plugin helper is not a PE executable");
+  }
+
+  const macOSExecutable = await readFile(path.join(pluginRoot, "bin", "echo-music-keeper-helper-macos"));
+  const architectures = universalMachOArchitectures(macOSExecutable);
+  if (!architectures) throw new Error("macOS helper is not a universal Mach-O binary");
+  for (const required of REQUIRED_MACOS_ARCHITECTURES) {
+    if (!architectures.includes(required)) {
+      throw new Error(`macOS helper is missing a required architecture: 0x${required.toString(16)}`);
+    }
   }
   return { files, version: manifest.version };
 }

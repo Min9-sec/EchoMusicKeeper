@@ -32,8 +32,9 @@ export function normalizeSettings(value) {
 
 export function toHelperConfig(settings, paths) {
   const normalized = normalizeSettings(settings);
+  const separator = paths.separator === "/" ? "/" : "\\";
   return {
-    cacheRoot: normalized.cacheRoot || `${paths.pluginRoot}\\cache`,
+    cacheRoot: normalized.cacheRoot || `${paths.pluginRoot}${separator}cache`,
     downloadRoot: normalized.downloadRoot || paths.defaultMusicRoot,
     managedDownloadRoots: normalizePaths(paths.managedDownloadRoots),
     completedDownloadPaths: normalizePaths(paths.completedDownloadPaths),

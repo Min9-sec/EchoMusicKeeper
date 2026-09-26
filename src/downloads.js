@@ -101,6 +101,7 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
     const settings = settingsRef?.value ?? {};
     const config = toHelperConfig(settings, {
       pluginRoot: runtime?.pluginRoot ?? "", defaultMusicRoot: runtime?.defaultMusicRoot ?? "",
+      separator: runtime?.pathSeparator ?? "\\",
       managedDownloadRoots: paths(), completedDownloadPaths: records.value.filter((entry) => !entry.missing).map((entry) => entry.path),
     });
     await client.updateConfig(config).catch(() => undefined);

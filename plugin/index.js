@@ -27,8 +27,9 @@ function normalizeSettings(value) {
 }
 function toHelperConfig(settings, paths) {
   const normalized = normalizeSettings(settings);
+  const separator = paths.separator === "/" ? "/" : "\\";
   return {
-    cacheRoot: normalized.cacheRoot || `${paths.pluginRoot}\\cache`,
+    cacheRoot: normalized.cacheRoot || `${paths.pluginRoot}${separator}cache`,
     downloadRoot: normalized.downloadRoot || paths.defaultMusicRoot,
     managedDownloadRoots: normalizePaths(paths.managedDownloadRoots),
     completedDownloadPaths: normalizePaths(paths.completedDownloadPaths),
@@ -433,6 +434,7 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
     const config = toHelperConfig(settings, {
       pluginRoot: runtime?.pluginRoot ?? "",
       defaultMusicRoot: runtime?.defaultMusicRoot ?? "",
+      separator: runtime?.pathSeparator ?? "\\",
       managedDownloadRoots: paths(),
       completedDownloadPaths: records.value.filter((entry) => !entry.missing).map((entry) => entry.path)
     });
@@ -699,6 +701,43 @@ function createHelperClient({ baseUrl, token, fetchImpl = globalThis.fetch }) {
   });
 }
 
+// src/platform.js
+var DEFAULT_PLATFORM = "windows";
+var HELPER_EXECUTABLES = Object.freeze({
+  windows: "bin/echo-music-keeper-helper.exe",
+  macos: "bin/echo-music-keeper-helper-macos"
+});
+function platformHints(source) {
+  const navigator = source?.navigator ?? {};
+  return [
+    source?.electron?.platform,
+    source?.process?.platform,
+    navigator.userAgentData?.platform,
+    navigator.platform,
+    navigator.userAgent
+  ].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean).join(" ");
+}
+function detectPlatform(...sources) {
+  for (const source of sources) {
+    const platform = matchPlatform(platformHints(source));
+    if (platform) return platform;
+  }
+  return DEFAULT_PLATFORM;
+}
+function matchPlatform(hints) {
+  if (!hints) return null;
+  if (/win(?:32|64|dows|nt)/.test(hints)) return "windows";
+  if (/mac|darwin|iphone|ipad|ios/.test(hints)) return "macos";
+  if (/linux|android|cros/.test(hints)) return "linux";
+  return null;
+}
+function helperExecutable(platform) {
+  return HELPER_EXECUTABLES[platform] ?? HELPER_EXECUTABLES[DEFAULT_PLATFORM];
+}
+function pathSeparator(platform) {
+  return platform === "windows" ? "\\" : "/";
+}
+
 // src/helper-runtime.js
 var PORT_MIN = 49152;
 var PORT_COUNT = 65535 - PORT_MIN + 1;
@@ -725,6 +764,9 @@ function waitForAbort(promise, signal) {
 function createHelperRuntime(ctx, options = {}) {
   const pluginRoot = String(ctx?.descriptor?.directory ?? "");
   const settings = options.settings ?? {};
+  const platform = String(options.platform ?? detectPlatform(options.environment ?? ctx, globalThis));
+  const executable = helperExecutable(platform);
+  const separator = pathSeparator(platform);
   const clientFactory = options.clientFactory ?? ((clientOptions) => createHelperClient({
     ...clientOptions,
     fetchImpl: options.fetchImpl
@@ -791,6 +833,7 @@ function createHelperRuntime(ctx, options = {}) {
     const initialConfig = toHelperConfig(settings, {
       pluginRoot,
       defaultMusicRoot: "",
+      separator,
       ...paths
     });
     const seenPorts = /* @__PURE__ */ new Set();
@@ -810,7 +853,7 @@ function createHelperRuntime(ctx, options = {}) {
         let launchResult;
         try {
           launchResult = await ctx.process.launch({
-            executable: "bin/echo-music-keeper-helper.exe",
+            executable,
             args: [
               "--port",
               String(port),
@@ -846,7 +889,7 @@ function createHelperRuntime(ctx, options = {}) {
         }
         defaultMusicRoot = String(health.defaultMusicPath ?? defaultMusicRoot);
         try {
-          await client.updateConfig(toHelperConfig(settings, { pluginRoot, defaultMusicRoot, ...paths }));
+          await client.updateConfig(toHelperConfig(settings, { pluginRoot, defaultMusicRoot, separator, ...paths }));
         } catch {
           await terminate(entry);
           continue;
@@ -917,6 +960,15 @@ function createHelperRuntime(ctx, options = {}) {
     },
     get pluginRoot() {
       return pluginRoot;
+    },
+    get platform() {
+      return platform;
+    },
+    get pathSeparator() {
+      return separator;
+    },
+    get executable() {
+      return executable;
     },
     get defaultMusicRoot() {
       return defaultMusicRoot;
@@ -1376,6 +1428,7 @@ function createSettingsComponent(ctx, runtime, settingsRef) {
         await runtime?.client?.updateConfig?.(toHelperConfig(normalized, {
           pluginRoot: runtime?.pluginRoot ?? "",
           defaultMusicRoot: runtime?.defaultMusicRoot ?? "",
+          separator: runtime?.pathSeparator ?? "\\",
           managedDownloadRoots,
           completedDownloadPaths
         }));
@@ -1397,7 +1450,7 @@ function createSettingsComponent(ctx, runtime, settingsRef) {
         const custom = String(settingsRef.value.cacheRoot ?? "").trim();
         if (custom) return custom;
         const pluginRoot = String(runtime?.pluginRoot ?? "").trim().replace(/[\\/]$/, "");
-        return pluginRoot ? `${pluginRoot}\\cache` : "\u6B63\u5728\u68C0\u6D4B\u63D2\u4EF6\u76EE\u5F55";
+        return pluginRoot ? `${pluginRoot}${runtime?.pathSeparator ?? "\\"}cache` : "\u6B63\u5728\u68C0\u6D4B\u63D2\u4EF6\u76EE\u5F55";
       };
       const downloadLocation = () => String(settingsRef.value.downloadRoot || runtime?.defaultMusicRoot || "\u6B63\u5728\u68C0\u6D4B\u9ED8\u8BA4\u97F3\u4E50\u76EE\u5F55").trim();
       const changeCacheLimit = (event) => {

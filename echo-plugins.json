@@ -6,7 +6,7 @@
       "id": "echo-music-keeper",
       "path": "plugin",
       "homepage": "https://github.com/Min9-sec/EchoMusicKeeper",
-      "tags": ["audio", "cache", "download", "offline", "windows"]
+      "tags": ["audio", "cache", "download", "offline", "windows", "macos"]
     }
   ]
 }

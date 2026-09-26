@@ -7,7 +7,7 @@ test("installable package contains only the required runtime files", async () =>
   const packageJSON = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   const result = await verifyPackage();
   assert.deepEqual(result, {
-    files: ["LICENSE", "bin/echo-music-keeper-helper.exe", "icon.svg", "index.js", "manifest.json"],
+    files: ["LICENSE", "bin/echo-music-keeper-helper-macos", "bin/echo-music-keeper-helper.exe", "icon.svg", "index.js", "manifest.json"],
     version: packageJSON.version,
   });
 });
