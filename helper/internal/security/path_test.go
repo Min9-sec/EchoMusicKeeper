@@ -113,6 +113,7 @@ func TestValidateRemoteURL(t *testing.T) {
 		"https://[::1%25Ethernet]/audio",
 		"https://[fc00::1%25Ethernet]/audio",
 		"http://100.64.0.1/audio",
+		"http://198.18.1.175/audio",
 		"http://[64:ff9b::a00:1]/audio",
 		"http://192.0.2.1/audio",
 		"http://224.0.0.1/audio",

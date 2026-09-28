@@ -33,6 +33,7 @@ https://github.com/Min9-sec/EchoMusicKeeper
 
 - 帮助程序需要可执行权限（`755`）。在线安装或使用 GitHub 的 ZIP 安装时通常会被保留；若日志提示启动失败，可在插件目录执行 `chmod +x bin/echo-music-keeper-helper-macos`。
 - 帮助程序只做了 ad-hoc 签名，没有经过 Apple 公证。如果 macOS 因为下载来源隔离而拒绝执行，可执行 `xattr -dr com.apple.quarantine <插件目录>` 后再启用。
+- 使用 Clash、Surge 等 Fake-IP 模式时，帮助程序仅允许酷狗域名（`kugou.com` 及其子域名）使用 `198.18.0.0/15` 映射；直接访问该网段、其他保留地址及无关域名仍会被 SSRF 防护拒绝。
 - 缓存目录、下载目录及其上级路径不能包含符号链接（助手会拒绝这类路径，例如 `/tmp`、`/var` 下的路径）。请在“设置 - EchoMusicKeeper”中选择真实路径。
 - 默认下载目录是当前用户的“音乐”目录（`~/Music`）。
 - “打开位置”使用访达（Finder）显示缓存文件或下载目录。

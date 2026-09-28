@@ -17,6 +17,8 @@ import (
 type lookupNetIPFunc func(context.Context, string, string) ([]netip.Addr, error)
 type dialContextFunc func(context.Context, string, string) (net.Conn, error)
 
+var proxyFakeIPPrefix = netip.MustParsePrefix("198.18.0.0/15")
+
 type rejectedCustomTransport struct{}
 
 func (rejectedCustomTransport) RoundTrip(*http.Request) (*http.Response, error) {
@@ -91,7 +93,7 @@ func validatedDialContext(lookup lookupNetIPFunc, dial dialContextFunc) dialCont
 			return nil, err
 		}
 		for _, candidate := range addresses {
-			if !security.IsPublicRemoteIP(candidate) {
+			if !allowedDialAddress(host, candidate) {
 				return nil, fmt.Errorf("upstream address for %q is not public", host)
 			}
 		}
@@ -105,6 +107,20 @@ func validatedDialContext(lookup lookupNetIPFunc, dial dialContextFunc) dialCont
 		}
 		return nil, fmt.Errorf("connect to validated upstream host %q: %w", host, errors.Join(failures...))
 	}
+}
+
+func allowedDialAddress(host string, address netip.Addr) bool {
+	if security.IsPublicRemoteIP(address) {
+		return true
+	}
+	if !address.IsValid() || address.Zone() != "" || !proxyFakeIPPrefix.Contains(address.Unmap()) {
+		return false
+	}
+	// Clash-compatible TUN modes synthesize addresses from the benchmarking
+	// range. Limit this exception to the service this plugin supports so direct
+	// IP URLs and unrelated DNS answers remain behind the SSRF boundary.
+	normalizedHost := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	return normalizedHost == "kugou.com" || strings.HasSuffix(normalizedHost, ".kugou.com")
 }
 
 func resolveDialAddresses(ctx context.Context, network, host string, lookup lookupNetIPFunc) ([]netip.Addr, error) {

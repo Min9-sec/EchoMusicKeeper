@@ -32,6 +32,7 @@ func TestSecureDialRejectsNonPublicAndMixedDNSAnswers(t *testing.T) {
 		{name: "loopback", addresses: []netip.Addr{netip.MustParseAddr("127.0.0.1")}},
 		{name: "private", addresses: []netip.Addr{netip.MustParseAddr("10.0.0.1")}},
 		{name: "link local", addresses: []netip.Addr{netip.MustParseAddr("169.254.1.1")}},
+		{name: "benchmark fake IP for unrelated host", addresses: []netip.Addr{netip.MustParseAddr("198.18.1.175")}},
 		{name: "unspecified", addresses: []netip.Addr{netip.MustParseAddr("::")}},
 		{name: "multicast", addresses: []netip.Addr{netip.MustParseAddr("ff02::1")}},
 		{name: "NAT64 private mapping", addresses: []netip.Addr{netip.MustParseAddr("64:ff9b::a00:1")}},
@@ -55,6 +56,71 @@ func TestSecureDialRejectsNonPublicAndMixedDNSAnswers(t *testing.T) {
 				t.Fatalf("base dialer called %d times", dialed.Load())
 			}
 		})
+	}
+}
+
+func TestSecureDialAllowsProxyFakeIPOnlyForKugouHosts(t *testing.T) {
+	fakeIP := netip.MustParseAddr("198.18.1.175")
+	tests := []struct {
+		name        string
+		host        string
+		wantDial    bool
+		wantAddress string
+	}{
+		{name: "Kugou root", host: "kugou.com", wantDial: true, wantAddress: "198.18.1.175:443"},
+		{name: "Kugou subdomain case and trailing dot", host: "FS.YouthAndroid2.KuGou.Com.", wantDial: true, wantAddress: "198.18.1.175:443"},
+		{name: "unrelated host", host: "media.example.test"},
+		{name: "suffix lookalike", host: "notkugou.com"},
+		{name: "Kugou prefix lookalike", host: "kugou.com.example.test"},
+		{name: "literal benchmark IP", host: "198.18.1.175"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var dialed []string
+			lookup := func(context.Context, string, string) ([]netip.Addr, error) {
+				return []netip.Addr{fakeIP}, nil
+			}
+			dial := func(_ context.Context, _, address string) (net.Conn, error) {
+				dialed = append(dialed, address)
+				return nil, errors.New("stop after address capture")
+			}
+			client := secureHTTPClientWithNetwork(nil, lookup, dial)
+			transport := client.Transport.(*http.Transport)
+			_, err := transport.DialContext(context.Background(), "tcp", net.JoinHostPort(test.host, "443"))
+			if err == nil {
+				t.Fatal("captured test dial unexpectedly succeeded")
+			}
+			if test.wantDial {
+				if !strings.Contains(err.Error(), "stop after address capture") || len(dialed) != 1 || dialed[0] != test.wantAddress {
+					t.Fatalf("dial error = %v, addresses = %v", err, dialed)
+				}
+				return
+			}
+			if len(dialed) != 0 || !strings.Contains(err.Error(), "not public") {
+				t.Fatalf("rejected dial error = %v, addresses = %v", err, dialed)
+			}
+		})
+	}
+}
+
+func TestSecureDialRejectsPrivateAddressMixedWithKugouProxyFakeIP(t *testing.T) {
+	var dialed atomic.Int32
+	client := secureHTTPClientWithNetwork(nil,
+		func(context.Context, string, string) ([]netip.Addr, error) {
+			return []netip.Addr{
+				netip.MustParseAddr("198.18.1.175"),
+				netip.MustParseAddr("10.0.0.1"),
+			}, nil
+		},
+		func(context.Context, string, string) (net.Conn, error) {
+			dialed.Add(1)
+			return nil, errors.New("unexpected dial")
+		},
+	)
+	transport := client.Transport.(*http.Transport)
+	_, err := transport.DialContext(context.Background(), "tcp", "fs.kugou.com:443")
+	if err == nil || !strings.Contains(err.Error(), "not public") || dialed.Load() != 0 {
+		t.Fatalf("mixed Kugou dial error = %v, dial count = %d", err, dialed.Load())
 	}
 }
 

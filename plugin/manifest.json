@@ -1,7 +1,7 @@
 {
   "id": "echo-music-keeper",
   "name": "EchoMusicKeeper",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "边播放边缓存普通酷狗歌曲，并支持保存到独立下载目录。",
   "author": "Min9-sec",
   "icon": "icon.svg",
