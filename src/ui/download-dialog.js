@@ -22,17 +22,24 @@ export function createDownloadDialog(ctx, controller, track, options = {}) {
       const Button = hostComponent(ctx, "Button", "button");
       const Select = hostComponent(ctx, "Select", "select");
       const Icon = vue.resolveComponent?.("Icon");
+      const submitting = vue.ref?.(false) ?? { value: false };
       const confirm = async () => {
-        const task = await controller.request(track, selected.value);
-        if (task) close();
+        if (submitting.value) return;
+        submitting.value = true;
+        try {
+          const task = await controller.request(track, selected.value);
+          if (task) close();
+        } finally {
+          submitting.value = false;
+        }
       };
-      return () => h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "下载歌曲" }, [
+      return () => h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "下载歌曲", "aria-busy": submitting.value }, [
         h("header", { class: "echo-music-keeper-dialog__header" }, [h("h3", "下载歌曲"), Icon ? h(Icon, { icon: ctx?.icons?.iconArrowBarToDown ?? "tabler:download", width: 20, height: 20 }) : null]),
         h("p", `${track?.title ?? track?.songName ?? ""} ${track?.artist ?? track?.singerName ?? ""}`.trim()),
-        h(Select, { modelValue: selected.value, "onUpdate:modelValue": (value) => { selected.value = normalizeQuality(value) ?? selected.value; }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
+        h(Select, { modelValue: selected.value, disabled: submitting.value, "onUpdate:modelValue": (value) => { selected.value = normalizeQuality(value) ?? selected.value; }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
         h("footer", { class: "echo-music-keeper-dialog__actions" }, [
-          h(Button, { onClick: close }, () => "取消"),
-          h(Button, { type: "primary", onClick: confirm }, () => "下载"),
+          h(Button, { disabled: submitting.value, onClick: close }, () => "取消"),
+          h(Button, { type: "primary", loading: submitting.value, disabled: submitting.value, onClick: confirm }, () => submitting.value ? "正在解析…" : "下载"),
         ]),
       ]);
     },

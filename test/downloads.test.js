@@ -129,9 +129,10 @@ test("download creates a standalone task when its cache key is absent", async ()
       createDownload: async (body) => { calls.push(body); return { state: "queued" }; },
     },
   }, { value: {} });
-  await controller.request({ id: "123", hash, title: "Song", artist: "Artist" }, "320");
+  await controller.request({ id: "123", hash, name: "Song", title: "Artist - Song", artist: "Artist" }, "320");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].track.key, key);
+  assert.equal(calls[0].track.title, "Song");
   assert.equal(calls[0].remoteUrl, "https://cdn.example/song.mp3");
 });
 

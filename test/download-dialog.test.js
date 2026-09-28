@@ -44,3 +44,51 @@ test("download dialog wraps lazy host components and stays open after a failed r
   assert.deepEqual(requests, [[{ hash: "0123456789abcdef", title: "Song" }, "320"]]);
   assert.equal(closed, 0);
 });
+
+test("download dialog exposes a pending state and suppresses duplicate submissions", async () => {
+  const h = (type, props, children) => ({ type, props, children });
+  let mounted;
+  let releaseRequest;
+  const calls = [];
+  const pending = new Promise((resolve) => { releaseRequest = resolve; });
+  const ctx = {
+    vue: {
+      h, ref: (value) => ({ value }), resolveComponent: () => null,
+      defineAsyncComponent(loader) { return loader.name === "loadButton" ? "HostButton" : "HostSelect"; },
+    },
+    ui: {
+      components: {
+        Button: async function loadButton() {},
+        Select: async function loadSelect() {},
+      },
+      teleport(component) { mounted = component; return () => {}; },
+    },
+  };
+  createDownloadDialog(ctx, { request: (...args) => { calls.push(args); return pending; } }, { hash: "0123456789abcdef", title: "Song" });
+
+  const render = mounted.setup();
+  let tree = render();
+  let buttons = nodes(tree).filter((node) => node.type === "HostButton");
+  const first = buttons.at(-1).props.onClick();
+  const duplicate = buttons.at(-1).props.onClick();
+
+  tree = render();
+  buttons = nodes(tree).filter((node) => node.type === "HostButton");
+  const select = nodes(tree).find((node) => node.type === "HostSelect");
+  assert.equal(tree.props["aria-busy"], true);
+  assert.equal(buttons[0].props.disabled, true);
+  assert.equal(buttons[1].props.loading, true);
+  assert.equal(buttons[1].props.disabled, true);
+  assert.equal(buttons[1].children(), "正在解析…");
+  assert.equal(select.props.disabled, true);
+  assert.equal(calls.length, 1);
+
+  releaseRequest(null);
+  await Promise.all([first, duplicate]);
+  tree = render();
+  buttons = nodes(tree).filter((node) => node.type === "HostButton");
+  assert.equal(tree.props["aria-busy"], false);
+  assert.equal(buttons[1].props.loading, false);
+  assert.equal(buttons[1].props.disabled, false);
+  assert.equal(buttons[1].children(), "下载");
+});

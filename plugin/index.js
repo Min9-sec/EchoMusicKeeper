@@ -300,19 +300,26 @@ function createDownloadDialog(ctx, controller, track, options = {}) {
       const Button = hostComponent(ctx, "Button", "button");
       const Select = hostComponent(ctx, "Select", "select");
       const Icon = vue.resolveComponent?.("Icon");
+      const submitting = vue.ref?.(false) ?? { value: false };
       const confirm = async () => {
-        const task = await controller.request(track, selected.value);
-        if (task) close();
+        if (submitting.value) return;
+        submitting.value = true;
+        try {
+          const task = await controller.request(track, selected.value);
+          if (task) close();
+        } finally {
+          submitting.value = false;
+        }
       };
-      return () => h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "\u4E0B\u8F7D\u6B4C\u66F2" }, [
+      return () => h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "\u4E0B\u8F7D\u6B4C\u66F2", "aria-busy": submitting.value }, [
         h("header", { class: "echo-music-keeper-dialog__header" }, [h("h3", "\u4E0B\u8F7D\u6B4C\u66F2"), Icon ? h(Icon, { icon: ctx?.icons?.iconArrowBarToDown ?? "tabler:download", width: 20, height: 20 }) : null]),
         h("p", `${track?.title ?? track?.songName ?? ""} ${track?.artist ?? track?.singerName ?? ""}`.trim()),
-        h(Select, { modelValue: selected.value, "onUpdate:modelValue": (value) => {
+        h(Select, { modelValue: selected.value, disabled: submitting.value, "onUpdate:modelValue": (value) => {
           selected.value = normalizeQuality(value) ?? selected.value;
         }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
         h("footer", { class: "echo-music-keeper-dialog__actions" }, [
-          h(Button, { onClick: close }, () => "\u53D6\u6D88"),
-          h(Button, { type: "primary", onClick: confirm }, () => "\u4E0B\u8F7D")
+          h(Button, { disabled: submitting.value, onClick: close }, () => "\u53D6\u6D88"),
+          h(Button, { type: "primary", loading: submitting.value, disabled: submitting.value, onClick: confirm }, () => submitting.value ? "\u6B63\u5728\u89E3\u6790\u2026" : "\u4E0B\u8F7D")
         ])
       ]);
     }
@@ -384,7 +391,7 @@ function helperTrack(track, source) {
     requestedQuality: source.requestedQuality,
     quality: source.quality,
     effect: "none",
-    title: String(track?.title ?? track?.songName ?? ""),
+    title: String(track?.name ?? track?.songName ?? track?.title ?? ""),
     artist: String(track?.artist ?? track?.singerName ?? ""),
     album: String(track?.album ?? track?.albumName ?? ""),
     extension: source.extension,

@@ -48,7 +48,7 @@ function helperTrack(track, source) {
   return {
     key: `${source.actualHash}.${source.quality}.none`, catalogHash: source.catalogHash,
     hash: source.actualHash, requestedQuality: source.requestedQuality, quality: source.quality,
-    effect: "none", title: String(track?.title ?? track?.songName ?? ""),
+    effect: "none", title: String(track?.name ?? track?.songName ?? track?.title ?? ""),
     artist: String(track?.artist ?? track?.singerName ?? ""), album: String(track?.album ?? track?.albumName ?? ""),
     extension: source.extension, durationSeconds: Number(track?.durationSeconds ?? track?.duration ?? 0) || 0,
   };
