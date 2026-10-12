@@ -237,7 +237,10 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
     if (disposed || !entry?.path || !(await ctx?.dialog?.confirm?.({ title: "删除下载", content: "确定删除此下载文件吗？" }))) return false;
     if (disposed) return false;
     const client = clientFor(runtime);
-    if (!client?.deleteDownload) return false;
+    if (!client?.deleteDownload) {
+      reportFailure("下载服务未启动，请检查插件是否已获准启动缓存服务。");
+      return false;
+    }
     try {
       await client.deleteDownload(entry.path);
     } catch (error) {
@@ -256,7 +259,10 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
     await ready;
     if (disposed || !entry?.path) return false;
     const client = clientFor(runtime);
-    if (!client?.revealFile) return false;
+    if (!client?.revealFile) {
+      reportFailure("无法打开下载位置。");
+      return false;
+    }
     try {
       await client.revealFile({ kind: "select", path: entry.path });
       return true;
@@ -266,6 +272,12 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
     }
   }
 
+  function menuSong(value) {
+    if (!value || typeof value !== "object") return value ?? {};
+    if (/^[0-9a-f]{16,128}$/i.test(String(value.hash ?? "").trim())) return value;
+    const nested = value.song ?? value.track;
+    return nested && typeof nested === "object" ? nested : value;
+  }
   function supports(track) { return /^[0-9a-f]{16,128}$/i.test(String(track?.hash ?? "").trim()) && String(track?.source ?? "").toLowerCase() !== "cloud"; }
   function registerContextMenus(onRegistered) {
     if (typeof ctx?.ui?.addSongContextMenuItem !== "function") return [];
@@ -277,8 +289,14 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
       return found.length ? found : [normalizeQuality(track?.quality) ?? "320"];
     };
     const openDialog = (track) => {
-      activeDialog?.close?.();
-      activeDialog = createDownloadDialog(ctx, { request }, track, { availableQualities: availableQualities(track) });
+      try {
+        activeDialog?.close?.();
+        activeDialog = null;
+        activeDialog = createDownloadDialog(ctx, { request }, track, { availableQualities: availableQualities(track) });
+      } catch (error) {
+        activeDialog = null;
+        reportFailure(error instanceof Error && error.message ? error.message : "无法打开下载窗口。");
+      }
     };
     const disposers = [];
     const register = (item) => {
@@ -287,9 +305,9 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
       disposers.push(dispose);
       onRegistered?.(dispose);
     };
-    register({ id: "download", label: "下载歌曲", visible: supports, onSelect: openDialog });
-    register({ id: "reveal-download", label: "打开下载位置", visible: (track) => Boolean(find(track)), onSelect: (track) => reveal(find(track)) });
-    register({ id: "delete-download", label: "删除下载", visible: (track) => Boolean(find(track)), onSelect: (track) => remove(find(track)) });
+    register({ id: "download", label: "下载歌曲", visible: (track) => supports(menuSong(track)), onSelect: (track) => openDialog(menuSong(track)) });
+    register({ id: "reveal-download", label: "打开下载位置", visible: (track) => Boolean(find(menuSong(track))), onSelect: (track) => reveal(find(menuSong(track))) });
+    register({ id: "delete-download", label: "删除下载", visible: (track) => Boolean(find(menuSong(track))), onSelect: (track) => remove(find(menuSong(track))) });
     return disposers;
   }
 

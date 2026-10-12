@@ -97,6 +97,69 @@ test("deleting one same-key export retains the other exact path", async () => {
   controller.dispose();
 });
 
+test("right-click download opens the chooser for the current and nested song shapes and toasts when mounting fails", async () => {
+  const warnings = [];
+  const menus = [];
+  let mounted = null;
+  const h = (type, props, children) => ({ type, props, children });
+  const ctx = context({
+    toast: { warning: (message) => warnings.push(message), success: () => {} },
+    vue: { h, ref: (value) => ({ value }), resolveComponent: () => null },
+    ui: {
+      addSongContextMenuItem(item) { menus.push(item); return () => {}; },
+      teleport(component) { mounted = component; return () => {}; },
+    },
+  });
+  const controller = createDownloadController(ctx, { client: null }, { value: {} });
+  controller.registerContextMenus();
+  const download = menus.find((item) => item.id === "download");
+  const track = { id: "123", hash, title: "Song", artist: "Artist", source: "kugou" };
+  assert.equal(typeof download.onSelect, "function");
+  assert.equal(download.onClick, undefined);
+  assert.equal(download.visible(track), true);
+  assert.equal(download.visible({ song: track }), true);
+  assert.equal(download.visible({ track }), true);
+  assert.equal(download.visible({ hash: "zz", song: { ...track, source: "cloud" } }), false);
+  assert.equal(download.visible({ source: "cloud", hash }), false);
+
+  download.onSelect(track);
+  assert.equal(mounted.setup()().props.class, "echo-music-keeper-dialog-layer");
+  const paragraph = nodes(mounted.setup()()).find((node) => node.type === "p");
+  assert.equal(paragraph.props, "Song Artist");
+
+  mounted = null;
+  download.onSelect({ song: { ...track, title: "Nested" } });
+  assert.equal(nodes(mounted.setup()()).find((node) => node.type === "p").props, "Nested Artist");
+
+  warnings.length = 0;
+  ctx.ui.teleport = () => undefined;
+  assert.doesNotThrow(() => download.onSelect(track));
+  assert.deepEqual(warnings, ["无法打开下载窗口。"]);
+
+  ctx.ui.teleport = () => { throw new Error("boom"); };
+  assert.doesNotThrow(() => download.onSelect({ track }));
+  assert.deepEqual(warnings, ["无法打开下载窗口。", "无法打开下载窗口。"]);
+  controller.dispose();
+});
+
+function nodes(value) {
+  if (Array.isArray(value)) return value.flatMap(nodes);
+  if (!value || typeof value !== "object") return [];
+  return [value, ...nodes(value.children)];
+}
+
+test("reveal and delete toast when the helper cannot perform the menu action", async () => {
+  const warnings = [];
+  const controller = createDownloadController(context({
+    stored: [record],
+    toast: { warning: (message) => warnings.push(message) },
+  }), { client: null }, { value: {} });
+  assert.equal(await controller.reveal(record), false);
+  assert.equal(await controller.remove(record), false);
+  assert.deepEqual(warnings, ["无法打开下载位置。", "下载服务未启动，请检查插件是否已获准启动缓存服务。"]);
+  controller.dispose();
+});
+
 test("download reveal selects the completed file through the real handler contract", async () => {
   const targets = [];
   const controller = createDownloadController(context({ stored: [record] }), {

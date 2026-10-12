@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createDownloadDialog } from "../src/ui/download-dialog.js";
+import { ECHO_MUSIC_KEEPER_STYLES } from "../src/ui/styles.js";
 
 function nodes(value) {
   if (Array.isArray(value)) return value.flatMap(nodes);
@@ -74,8 +75,9 @@ test("download dialog exposes a pending state and suppresses duplicate submissio
 
   tree = render();
   buttons = nodes(tree).filter((node) => node.type === "HostButton");
+  const dialog = nodes(tree).find((node) => node.props?.role === "dialog");
   const select = nodes(tree).find((node) => node.type === "HostSelect");
-  assert.equal(tree.props["aria-busy"], true);
+  assert.equal(dialog.props["aria-busy"], true);
   assert.equal(buttons[0].props.disabled, true);
   assert.equal(buttons[1].props.loading, true);
   assert.equal(buttons[1].props.disabled, true);
@@ -87,8 +89,52 @@ test("download dialog exposes a pending state and suppresses duplicate submissio
   await Promise.all([first, duplicate]);
   tree = render();
   buttons = nodes(tree).filter((node) => node.type === "HostButton");
-  assert.equal(tree.props["aria-busy"], false);
+  assert.equal(nodes(tree).find((node) => node.props?.role === "dialog").props["aria-busy"], false);
   assert.equal(buttons[1].props.loading, false);
   assert.equal(buttons[1].props.disabled, false);
   assert.equal(buttons[1].children(), "下载");
+});
+
+test("download dialog is a fixed overlay and toasts when the host cannot mount it", () => {
+  assert.match(ECHO_MUSIC_KEEPER_STYLES, /\.echo-music-keeper-dialog-host\{[^}]*position:fixed[^}]*z-index:1800/);
+  assert.match(ECHO_MUSIC_KEEPER_STYLES, /\.echo-music-keeper-dialog-layer\{[^}]*position:fixed[^}]*z-index:1800/);
+  const h = (type, props, children) => ({ type, props, children });
+  const warnings = [];
+  const vue = { h, ref: (value) => ({ value }), resolveComponent: () => null };
+  const track = { hash: "0123456789abcdef", title: "Song", artist: "Artist" };
+  let teleportOptions;
+  let mounted;
+  let closed = 0;
+  const shown = createDownloadDialog({
+    vue,
+    toast: { warning: (message) => warnings.push(message) },
+    ui: { teleport(component, options) { mounted = component; teleportOptions = options; return () => { closed += 1; }; } },
+  }, { request: async () => null }, track, { teleportOptions: { className: "extra", id: "download-dialog" } });
+
+  assert.equal(shown.shown, true);
+  assert.deepEqual(warnings, []);
+  assert.equal(teleportOptions.className, "echo-music-keeper-dialog-host extra");
+  assert.equal(teleportOptions.id, "download-dialog");
+  const tree = mounted.setup()();
+  assert.equal(tree.props.class, "echo-music-keeper-dialog-layer");
+  const dialog = nodes(tree).find((node) => node.props?.role === "dialog");
+  assert.equal(dialog.props.class, "echo-music-keeper-dialog");
+  assert.equal(dialog.props["aria-modal"], "true");
+  const backdrop = {};
+  tree.props.onClick({ target: backdrop, currentTarget: backdrop });
+  assert.equal(closed, 1);
+  tree.props.onClick({ target: {}, currentTarget: backdrop });
+  assert.equal(closed, 1);
+
+  for (const teleport of [undefined, () => undefined, () => { throw new Error("mount failed"); }]) {
+    warnings.length = 0;
+    const failed = createDownloadDialog({
+      vue,
+      toast: { warning: (message) => warnings.push(message) },
+      ui: teleport ? { teleport } : {},
+    }, { request: async () => null }, track);
+    assert.equal(failed.shown, false);
+    assert.deepEqual(warnings, ["无法打开下载窗口。"]);
+    assert.doesNotThrow(() => failed.close());
+  }
 });
