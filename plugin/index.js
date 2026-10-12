@@ -306,12 +306,18 @@ function hostComponent(ctx, name, fallback) {
   const loader = ctx?.ui?.components?.[name];
   return typeof ctx?.vue?.defineAsyncComponent === "function" && typeof loader === "function" ? ctx.vue.defineAsyncComponent(loader) : fallback;
 }
+var OPEN_FAILURE = "\u65E0\u6CD5\u6253\u5F00\u4E0B\u8F7D\u7A97\u53E3\u3002";
+function warn(ctx, message) {
+  ctx?.toast?.warning?.(message);
+}
 function createDownloadDialog(ctx, controller, track, options = {}) {
   const vue = ctx?.vue ?? {};
   const h = vue.h ?? ((type, props, children) => ({ type, props, children }));
   const selected = vue.ref?.(normalizeQuality(ctx?.stores?.player?.currentAudioQualityOverride ?? ctx?.stores?.settings?.defaultAudioQuality) ?? "320") ?? { value: "320" };
   const available = new Set((options.availableQualities ?? qualities).map(normalizeQuality).filter(Boolean));
   let close = () => {
+  };
+  let removeKeyListener = () => {
   };
   const component = {
     name: "EchoMusicKeeperDownloadDialog",
@@ -326,29 +332,58 @@ function createDownloadDialog(ctx, controller, track, options = {}) {
         try {
           const task = await controller.request(track, selected.value);
           if (task) close();
+        } catch {
+          warn(ctx, "\u4E0B\u8F7D\u4EFB\u52A1\u521B\u5EFA\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002");
         } finally {
           submitting.value = false;
         }
       };
-      return () => h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "\u4E0B\u8F7D\u6B4C\u66F2", "aria-busy": submitting.value }, [
-        h("header", { class: "echo-music-keeper-dialog__header" }, [h("h3", "\u4E0B\u8F7D\u6B4C\u66F2"), Icon ? h(Icon, { icon: ctx?.icons?.iconArrowBarToDown ?? "tabler:download", width: 20, height: 20 }) : null]),
-        h("p", `${track?.title ?? track?.songName ?? ""} ${track?.artist ?? track?.singerName ?? ""}`.trim()),
-        h(Select, { modelValue: selected.value, disabled: submitting.value, "onUpdate:modelValue": (value) => {
-          selected.value = normalizeQuality(value) ?? selected.value;
-        }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
-        h("footer", { class: "echo-music-keeper-dialog__actions" }, [
-          h(Button, { disabled: submitting.value, onClick: close }, () => "\u53D6\u6D88"),
-          h(Button, { type: "primary", loading: submitting.value, disabled: submitting.value, onClick: confirm }, () => submitting.value ? "\u6B63\u5728\u89E3\u6790\u2026" : "\u4E0B\u8F7D")
+      const onKey = (event) => {
+        if (event.key === "Escape" && !submitting.value) close();
+      };
+      if (typeof window !== "undefined") {
+        window.addEventListener("keydown", onKey);
+        removeKeyListener = () => window.removeEventListener("keydown", onKey);
+        vue.onBeforeUnmount?.(removeKeyListener);
+      }
+      const dismiss = (event) => {
+        if (event?.target === event?.currentTarget && !submitting.value) close();
+      };
+      return () => h("div", { class: "echo-music-keeper-dialog-layer", onClick: dismiss }, [
+        h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "\u4E0B\u8F7D\u6B4C\u66F2", "aria-busy": submitting.value, "aria-modal": "true" }, [
+          h("header", { class: "echo-music-keeper-dialog__header" }, [h("h3", "\u4E0B\u8F7D\u6B4C\u66F2"), Icon ? h(Icon, { icon: ctx?.icons?.iconArrowBarToDown ?? "tabler:download", width: 20, height: 20 }) : null]),
+          h("p", `${track?.title ?? track?.songName ?? ""} ${track?.artist ?? track?.singerName ?? ""}`.trim()),
+          h(Select, { modelValue: selected.value, disabled: submitting.value, "onUpdate:modelValue": (value) => {
+            selected.value = normalizeQuality(value) ?? selected.value;
+          }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
+          h("footer", { class: "echo-music-keeper-dialog__actions" }, [
+            h(Button, { disabled: submitting.value, onClick: close }, () => "\u53D6\u6D88"),
+            h(Button, { type: "primary", loading: submitting.value, disabled: submitting.value, onClick: confirm }, () => submitting.value ? "\u6B63\u5728\u89E3\u6790\u2026" : "\u4E0B\u8F7D")
+          ])
         ])
       ]);
     }
   };
-  const dispose = ctx?.ui?.teleport?.(component, options.teleportOptions) ?? (() => {
-  });
+  const teleportOptions = { ...options.teleportOptions, className: ["echo-music-keeper-dialog-host", options.teleportOptions?.className].filter(Boolean).join(" ") };
+  let dispose = () => {
+  };
+  let shown = false;
+  try {
+    const mounted = typeof ctx?.ui?.teleport === "function" ? ctx.ui.teleport(component, teleportOptions) : void 0;
+    if (typeof mounted === "function") {
+      dispose = mounted;
+      shown = true;
+    } else warn(ctx, OPEN_FAILURE);
+  } catch {
+    warn(ctx, OPEN_FAILURE);
+  }
   close = () => {
+    removeKeyListener();
+    removeKeyListener = () => {
+    };
     dispose?.();
   };
-  return Object.freeze({ close, component });
+  return Object.freeze({ close, component, shown });
 }
 
 // src/downloads.js
@@ -586,7 +621,10 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
     if (disposed || !entry?.path || !await ctx?.dialog?.confirm?.({ title: "\u5220\u9664\u4E0B\u8F7D", content: "\u786E\u5B9A\u5220\u9664\u6B64\u4E0B\u8F7D\u6587\u4EF6\u5417\uFF1F" })) return false;
     if (disposed) return false;
     const client = clientFor(runtime);
-    if (!client?.deleteDownload) return false;
+    if (!client?.deleteDownload) {
+      reportFailure("\u4E0B\u8F7D\u670D\u52A1\u672A\u542F\u52A8\uFF0C\u8BF7\u68C0\u67E5\u63D2\u4EF6\u662F\u5426\u5DF2\u83B7\u51C6\u542F\u52A8\u7F13\u5B58\u670D\u52A1\u3002");
+      return false;
+    }
     try {
       await client.deleteDownload(entry.path);
     } catch (error) {
@@ -604,7 +642,10 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
     await ready;
     if (disposed || !entry?.path) return false;
     const client = clientFor(runtime);
-    if (!client?.revealFile) return false;
+    if (!client?.revealFile) {
+      reportFailure("\u65E0\u6CD5\u6253\u5F00\u4E0B\u8F7D\u4F4D\u7F6E\u3002");
+      return false;
+    }
     try {
       await client.revealFile({ kind: "select", path: entry.path });
       return true;
@@ -612,6 +653,12 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
       ctx?.toast?.warning?.(error instanceof Error && error.message ? error.message : "\u65E0\u6CD5\u6253\u5F00\u4E0B\u8F7D\u4F4D\u7F6E\u3002");
       return false;
     }
+  }
+  function menuSong(value) {
+    if (!value || typeof value !== "object") return value ?? {};
+    if (/^[0-9a-f]{16,128}$/i.test(String(value.hash ?? "").trim())) return value;
+    const nested = value.song ?? value.track;
+    return nested && typeof nested === "object" ? nested : value;
   }
   function supports(track) {
     return /^[0-9a-f]{16,128}$/i.test(String(track?.hash ?? "").trim()) && String(track?.source ?? "").toLowerCase() !== "cloud";
@@ -626,8 +673,14 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
       return found.length ? found : [normalizeQuality(track?.quality) ?? "320"];
     };
     const openDialog = (track) => {
-      activeDialog?.close?.();
-      activeDialog = createDownloadDialog(ctx, { request }, track, { availableQualities: availableQualities(track) });
+      try {
+        activeDialog?.close?.();
+        activeDialog = null;
+        activeDialog = createDownloadDialog(ctx, { request }, track, { availableQualities: availableQualities(track) });
+      } catch (error) {
+        activeDialog = null;
+        reportFailure(error instanceof Error && error.message ? error.message : "\u65E0\u6CD5\u6253\u5F00\u4E0B\u8F7D\u7A97\u53E3\u3002");
+      }
     };
     const disposers = [];
     const register = (item) => {
@@ -636,9 +689,9 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
       disposers.push(dispose);
       onRegistered?.(dispose);
     };
-    register({ id: "download", label: "\u4E0B\u8F7D\u6B4C\u66F2", visible: supports, onSelect: openDialog });
-    register({ id: "reveal-download", label: "\u6253\u5F00\u4E0B\u8F7D\u4F4D\u7F6E", visible: (track) => Boolean(find(track)), onSelect: (track) => reveal(find(track)) });
-    register({ id: "delete-download", label: "\u5220\u9664\u4E0B\u8F7D", visible: (track) => Boolean(find(track)), onSelect: (track) => remove(find(track)) });
+    register({ id: "download", label: "\u4E0B\u8F7D\u6B4C\u66F2", visible: (track) => supports(menuSong(track)), onSelect: (track) => openDialog(menuSong(track)) });
+    register({ id: "reveal-download", label: "\u6253\u5F00\u4E0B\u8F7D\u4F4D\u7F6E", visible: (track) => Boolean(find(menuSong(track))), onSelect: (track) => reveal(find(menuSong(track))) });
+    register({ id: "delete-download", label: "\u5220\u9664\u4E0B\u8F7D", visible: (track) => Boolean(find(menuSong(track))), onSelect: (track) => remove(find(menuSong(track))) });
     return disposers;
   }
   if (typeof options.taskStore?.subscribe === "function") {
@@ -1187,7 +1240,7 @@ async function partialAfterFailure(ctx, client, track, quality, lookups) {
   return partialFallback(ctx, client, track, quality);
 }
 async function resolveCachedOrProxy(options) {
-  const { ctx, runtime, taskStore, settings = {}, track, effect = "none", forceReload = false, warn, downloads, sourceTimeoutMs } = options ?? {};
+  const { ctx, runtime, taskStore, settings = {}, track, effect = "none", forceReload = false, warn: warn2, downloads, sourceTimeoutMs } = options ?? {};
   const quality = normalizeQuality(options?.quality);
   const client = runtime?.client;
   try {
@@ -1201,7 +1254,7 @@ async function resolveCachedOrProxy(options) {
       { catalogHash, requestedQuality: quality }
     );
     if (!alias) {
-      warn?.();
+      warn2?.();
       return null;
     }
     const localAlias = await completeResult(ctx, alias, quality);
@@ -1221,7 +1274,7 @@ async function resolveCachedOrProxy(options) {
     const helperTrack2 = sourceTrack(track, source);
     const actual = validLookup(await client.cacheLookup({ key: helperTrack2.key }), { key: helperTrack2.key });
     if (!actual) {
-      warn?.();
+      warn2?.();
       return null;
     }
     const localActual = await completeResult(ctx, actual, source.quality);
@@ -1240,12 +1293,12 @@ async function resolveCachedOrProxy(options) {
     }
     return { url: session.playUrl, quality: source.quality, effect: "none" };
   } catch {
-    warn?.();
+    warn2?.();
     return null;
   }
 }
 function createAudioResolver(ctx, runtime, settingsRef, taskStore, downloads) {
-  const warn = warnOnceFactory(ctx);
+  const warn2 = warnOnceFactory(ctx);
   return {
     id: "echo-music-keeper",
     order: 10,
@@ -1265,7 +1318,7 @@ function createAudioResolver(ctx, runtime, settingsRef, taskStore, downloads) {
         quality,
         effect,
         forceReload,
-        warn
+        warn: warn2
       });
     }
   };
@@ -1636,7 +1689,7 @@ function createSettingsComponent(ctx, runtime, settingsRef) {
 
 // src/ui/styles.js
 var ECHO_MUSIC_KEEPER_STYLES = `
-.echo-music-keeper-page{box-sizing:border-box;min-height:100%;padding:20px 24px 32px;color:var(--color-text-main,var(--text-color,#222))}.echo-music-keeper-tabs{display:flex;gap:4px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-tabs button{height:36px;padding:0 14px;border:0;border-radius:4px 4px 0 0;color:inherit;background:transparent;font-size:14px;font-weight:600}.echo-music-keeper-tabs button.active{color:var(--color-primary,var(--primary-color,#3b82f6));border-bottom:2px solid currentColor}.echo-music-keeper-section{max-width:1240px;padding-top:20px}.echo-music-keeper-task-list,.echo-music-keeper-entry-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task{min-height:72px;display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) 88px 56px 90px 132px;align-items:center;gap:12px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-entry{min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task__song,.echo-music-keeper-entry>div:first-child{min-width:0;display:grid;gap:4px}.echo-music-keeper-task__song strong,.echo-music-keeper-entry strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.echo-music-keeper-task__song span,.echo-music-keeper-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;opacity:.72}.echo-music-keeper-progress{height:6px;min-width:80px;background:linear-gradient(90deg,var(--color-primary,var(--primary-color,#3b82f6)) var(--progress),rgba(127,127,127,.18) var(--progress));border-radius:3px}.echo-music-keeper-task__progress{display:grid;grid-template-columns:minmax(80px,1fr) 40px;align-items:center;gap:8px;font-size:12px}.echo-music-keeper-task__actions{display:flex;justify-content:flex-end;gap:6px}.echo-music-keeper-icon-button{width:32px;height:32px;padding:0;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent;display:inline-flex;align-items:center;justify-content:center}.echo-music-keeper-icon-button svg{display:block}.echo-music-keeper-empty{padding:28px 0;margin:0;text-align:center;opacity:.72}.echo-music-keeper-subheading{margin:24px 0 10px;font-size:14px}.echo-music-keeper-cache-summary{display:grid;grid-template-columns:minmax(140px,1fr) auto auto;gap:14px;align-items:center;margin-bottom:18px}.echo-music-keeper-dialog{width:min(360px,calc(100vw - 32px));padding:20px;background:var(--color-bg-elevated,var(--background-color,#fff));border-radius:6px}.echo-music-keeper-dialog__header,.echo-music-keeper-dialog__actions{display:flex;align-items:center;justify-content:space-between}.echo-music-keeper-settings{display:grid;gap:16px}.echo-music-keeper-settings label{display:grid;grid-template-columns:120px minmax(160px,1fr) auto;align-items:center;gap:10px}.echo-music-keeper-limit-input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin:0 0 0 130px;font-size:12px;line-height:1.5;opacity:.72;overflow-wrap:anywhere}.echo-music-keeper-settings__notice{margin-top:-6px}.echo-music-keeper-state.is-failed{color:#c2410c}.echo-music-keeper-state.is-needs-url{color:#b45309}@media(max-width:900px){.echo-music-keeper-page{padding:16px}.echo-music-keeper-task{grid-template-columns:minmax(180px,1fr) minmax(120px,1fr) 80px 112px}.echo-music-keeper-task>span:nth-of-type(2),.echo-music-keeper-task>span:nth-of-type(3){display:none}.echo-music-keeper-settings label{grid-template-columns:1fr;gap:6px}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin-left:0}.echo-music-keeper-cache-summary{grid-template-columns:1fr auto}.echo-music-keeper-cache-summary button{grid-column:1/-1;justify-self:start}}
+.echo-music-keeper-page{box-sizing:border-box;min-height:100%;padding:20px 24px 32px;color:var(--color-text-main,var(--text-color,#222))}.echo-music-keeper-tabs{display:flex;gap:4px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-tabs button{height:36px;padding:0 14px;border:0;border-radius:4px 4px 0 0;color:inherit;background:transparent;font-size:14px;font-weight:600}.echo-music-keeper-tabs button.active{color:var(--color-primary,var(--primary-color,#3b82f6));border-bottom:2px solid currentColor}.echo-music-keeper-section{max-width:1240px;padding-top:20px}.echo-music-keeper-task-list,.echo-music-keeper-entry-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task{min-height:72px;display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) 88px 56px 90px 132px;align-items:center;gap:12px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-entry{min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task__song,.echo-music-keeper-entry>div:first-child{min-width:0;display:grid;gap:4px}.echo-music-keeper-task__song strong,.echo-music-keeper-entry strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.echo-music-keeper-task__song span,.echo-music-keeper-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;opacity:.72}.echo-music-keeper-progress{height:6px;min-width:80px;background:linear-gradient(90deg,var(--color-primary,var(--primary-color,#3b82f6)) var(--progress),rgba(127,127,127,.18) var(--progress));border-radius:3px}.echo-music-keeper-task__progress{display:grid;grid-template-columns:minmax(80px,1fr) 40px;align-items:center;gap:8px;font-size:12px}.echo-music-keeper-task__actions{display:flex;justify-content:flex-end;gap:6px}.echo-music-keeper-icon-button{width:32px;height:32px;padding:0;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent;display:inline-flex;align-items:center;justify-content:center}.echo-music-keeper-icon-button svg{display:block}.echo-music-keeper-empty{padding:28px 0;margin:0;text-align:center;opacity:.72}.echo-music-keeper-subheading{margin:24px 0 10px;font-size:14px}.echo-music-keeper-cache-summary{display:grid;grid-template-columns:minmax(140px,1fr) auto auto;gap:14px;align-items:center;margin-bottom:18px}.echo-music-keeper-dialog-host{position:fixed;inset:0;z-index:1800;-webkit-app-region:no-drag}.echo-music-keeper-dialog-layer{position:fixed;inset:0;z-index:1800;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);-webkit-app-region:no-drag}.echo-music-keeper-dialog{position:relative;z-index:1;width:min(360px,calc(100vw - 32px));padding:20px;background:var(--color-bg-elevated,var(--background-color,#fff));border-radius:6px;box-shadow:0 18px 48px rgba(15,23,42,.28)}.echo-music-keeper-dialog__header,.echo-music-keeper-dialog__actions{display:flex;align-items:center;justify-content:space-between}.echo-music-keeper-settings{display:grid;gap:16px}.echo-music-keeper-settings label{display:grid;grid-template-columns:120px minmax(160px,1fr) auto;align-items:center;gap:10px}.echo-music-keeper-limit-input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin:0 0 0 130px;font-size:12px;line-height:1.5;opacity:.72;overflow-wrap:anywhere}.echo-music-keeper-settings__notice{margin-top:-6px}.echo-music-keeper-state.is-failed{color:#c2410c}.echo-music-keeper-state.is-needs-url{color:#b45309}@media(max-width:900px){.echo-music-keeper-page{padding:16px}.echo-music-keeper-task{grid-template-columns:minmax(180px,1fr) minmax(120px,1fr) 80px 112px}.echo-music-keeper-task>span:nth-of-type(2),.echo-music-keeper-task>span:nth-of-type(3){display:none}.echo-music-keeper-settings label{grid-template-columns:1fr;gap:6px}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin-left:0}.echo-music-keeper-cache-summary{grid-template-columns:1fr auto}.echo-music-keeper-cache-summary button{grid-column:1/-1;justify-self:start}}
 `;
 
 // src/index.js
