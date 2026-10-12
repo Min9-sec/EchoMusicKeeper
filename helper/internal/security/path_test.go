@@ -167,3 +167,44 @@ func TestSanitizeWindowsNameUsesUTF16Limit(t *testing.T) {
 		t.Fatalf("unexpected empty truncation result %q", name)
 	}
 }
+
+func TestCanonicalDirectoryExpandsHomeAndResolvesSymlinks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	real := filepath.Join(t.TempDir(), "real-music")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "Music")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := CanonicalDirectory("~/Music/周杰伦 专辑")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(resolvedReal, "周杰伦 专辑")
+	if got != want {
+		t.Fatalf("CanonicalDirectory() = %q, want %q", got, want)
+	}
+	again, err := CanonicalDirectory(got)
+	if err != nil || again != got {
+		t.Fatalf("CanonicalDirectory(%q) = %q, %v", got, again, err)
+	}
+
+	for _, candidate := range []string{
+		"~/Music/../secret",
+		home + string(filepath.Separator) + ".." + string(filepath.Separator) + "escape",
+		`\\?\C:\Music`,
+	} {
+		if _, err := CanonicalDirectory(candidate); err == nil {
+			t.Fatalf("expected rejection for %q", candidate)
+		}
+	}
+}

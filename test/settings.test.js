@@ -46,6 +46,27 @@ test("settings shows effective default paths and saves a numeric cache limit", a
   assert.equal(configs.at(-1).downloadRoot, "C:\\Users\\me\\Music");
 });
 
+test("settings saves a macOS directory returned in selectDirectory paths", async () => {
+  const saved = [];
+  const chosen = "/Users/me/Music/周杰伦 专辑";
+  const settingsRef = { value: { autoCache: true, cacheRoot: "", downloadRoot: "", cacheLimitBytes: GIB } };
+  const component = createSettingsComponent({
+    storage: { get: async () => [], set: async (key, value) => saved.push([key, value]) },
+    dialog: { selectDirectory: async () => ({ canceled: false, paths: [chosen] }) },
+    vue: { h: (type, props, children) => ({ type, props, children }) },
+  }, {
+    pluginRoot: "/Users/me/Plugins/echo-music-keeper",
+    defaultMusicRoot: "/Users/me/Music",
+    pathSeparator: "/",
+    client: { updateConfig: async () => {} },
+  }, settingsRef);
+  const clicks = nodes(component.setup()()).map((node) => node.props?.onClick).filter((fn) => typeof fn === "function");
+  await clicks.at(-1)();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(settingsRef.value.downloadRoot, chosen);
+  assert.equal(saved.at(-1)[1].downloadRoot, chosen);
+});
+
 test("settings ignores an invalid cache-limit value", () => {
   const settingsRef = { value: { autoCache: true, cacheRoot: "", downloadRoot: "", cacheLimitBytes: GIB } };
   const component = createSettingsComponent({

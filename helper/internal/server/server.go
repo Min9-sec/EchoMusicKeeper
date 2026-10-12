@@ -68,7 +68,7 @@ func New(options Options) http.Handler {
 		tokenHash: sha256.Sum256([]byte(options.Token)), manager: options.Manager,
 		config: options.Config, version: options.Version, defaultMusicPath: options.DefaultMusicPath,
 		logger: options.Logger, shutdown: options.Shutdown, launch: launch,
-		resolveCachePath: options.Manager.CompleteCachePath,
+		resolveCachePath: options.Manager.PlaybackCachePath,
 	}
 }
 
@@ -255,15 +255,19 @@ func (server *handler) cacheLookup(writer http.ResponseWriter, request *http.Req
 		server.writeError(writer, http.StatusBadRequest, "invalid_cache_lookup", "cache lookup request is invalid")
 		return
 	}
-	if lookup.Status == "complete" {
+	if lookup.Status == "complete" || lookup.Status == "partial" {
 		path, found, err := server.resolveCachePath(lookup.Key)
 		if err != nil {
 			server.internalError(writer, "cache_path_unavailable", err)
 			return
 		}
-		if !found {
-			lookup = model.CacheLookup{Status: "miss"}
-		} else {
+		if lookup.Status == "complete" {
+			if !found {
+				lookup = model.CacheLookup{Status: "miss"}
+			} else {
+				lookup.Path = path
+			}
+		} else if found {
 			lookup.Path = path
 		}
 	}

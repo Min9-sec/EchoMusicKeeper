@@ -8,7 +8,7 @@ const QUALITY_ALIASES = new Map([
   ["high", "high"], ["hires", "high"], ["hi-res", "high"], ["highres", "high"], ["high-res", "high"],
   ["super", "super"], ["master", "super"],
 ]);
-const QUALITY_ORDER = ["128", "320", "flac", "high", "super"];
+export const QUALITY_ORDER = ["128", "320", "flac", "high", "super"];
 const MAX_CANDIDATE_NODES = 64;
 const MAX_CANDIDATE_DEPTH = 8;
 

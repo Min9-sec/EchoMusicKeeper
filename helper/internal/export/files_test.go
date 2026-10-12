@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Min9-sec/EchoMusicKeeper/helper/internal/model"
@@ -143,6 +145,54 @@ func TestCopyAtomicRejectsDownloadRootReplacementAndCleansAnchoredTemp(t *testin
 		if len(entries) != 0 {
 			t.Fatalf("replacement test left files in %q: %v", directory, entries)
 		}
+	}
+}
+
+func TestCopyAtomicWritesThroughHomeSymlinkWithSpacesAndUnicode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	real := filepath.Join(t.TempDir(), "real-music")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(home, "Music")); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	source := filepath.Join(t.TempDir(), "source.mp3")
+	contents := []byte("downloaded audio")
+	if err := os.WriteFile(source, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	track := model.TrackInfo{
+		Hash: "a1b2c3d4e5f60708", Artist: "周杰伦", Title: "七里香", Quality: "flac", Extension: "flac",
+	}
+	got, err := CopyAtomic(source, "~/Music/周杰伦 专辑", track)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedReal, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, filepath.Join(resolvedReal, "周杰伦 专辑")+string(filepath.Separator)) {
+		t.Fatalf("CopyAtomic() = %q, want a file inside %q", got, resolvedReal)
+	}
+	if copied, err := os.ReadFile(got); err != nil || string(copied) != string(contents) {
+		t.Fatalf("copied bytes = %q, %v", copied, err)
+	}
+	if cached, err := os.ReadFile(source); err != nil || string(cached) != string(contents) {
+		t.Fatalf("source bytes = %q, %v", cached, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(got)
+		if statErr != nil || info.Mode().Perm()&0o444 != 0o444 {
+			t.Fatalf("download mode = %v, %v", info, statErr)
+		}
+	}
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(got), "*.echodownload.part"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files = %v, %v", matches, err)
 	}
 }
 

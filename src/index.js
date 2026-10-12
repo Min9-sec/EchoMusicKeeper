@@ -35,7 +35,7 @@ export function registerEchoMusicKeeperFeatures(ctx, runtime, settingsRef) {
   try {
     taskStore = createTaskStore(ctx, runtime);
     downloads = createDownloadController(ctx, runtime, settingsRef, { taskStore });
-    registrations.push(ctx.player.audioSource.register(createAudioResolver(ctx, runtime, settingsRef, taskStore)));
+    registrations.push(ctx.player.audioSource.register(createAudioResolver(ctx, runtime, settingsRef, taskStore, downloads)));
     downloads.registerContextMenus((dispose) => registrations.push(dispose));
     registrations.push(ctx.ui.addPage({
       id: "echo-music-keeper-manager",

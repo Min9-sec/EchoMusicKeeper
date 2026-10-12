@@ -15,6 +15,26 @@ const normalizePaths = (value) => Array.isArray(value)
   ? value.map(normalizePath).filter(Boolean)
   : [];
 
+function homeDirectory(paths) {
+  const explicit = String(paths?.home ?? "").trim().replace(/[\\/]+$/, "");
+  if (explicit) return explicit;
+  const music = String(paths?.defaultMusicRoot ?? "").trim().replace(/[\\/]+$/, "");
+  const match = /^(.*)[\\/]Music$/i.exec(music);
+  return match?.[1] ?? "";
+}
+
+/** Expand a leading ~ using a known home directory. Absolute paths stay unchanged. */
+export function expandHomePath(value, home) {
+  const path = String(value ?? "").trim();
+  if (path !== "~" && !path.startsWith("~/") && !path.startsWith("~\\")) return path;
+  const root = String(home ?? "").trim().replace(/[\\/]+$/, "");
+  if (!root) return path;
+  if (path === "~") return root;
+  const rest = path.slice(2).replace(/^[\\/]+/, "").replace(/[\\/]/g, root.includes("\\") ? "\\" : "/");
+  const separator = root.includes("\\") ? "\\" : "/";
+  return rest ? `${root}${separator}${rest}` : root;
+}
+
 export function normalizeSettings(value) {
   const source = value && typeof value === "object" ? value : {};
   const rawLimit = Number(source.cacheLimitBytes ?? DEFAULT_SETTINGS.cacheLimitBytes);
@@ -33,11 +53,13 @@ export function normalizeSettings(value) {
 export function toHelperConfig(settings, paths) {
   const normalized = normalizeSettings(settings);
   const separator = paths.separator === "/" ? "/" : "\\";
+  const home = homeDirectory(paths);
+  const expand = (value) => expandHomePath(value, home);
   return {
-    cacheRoot: normalized.cacheRoot || `${paths.pluginRoot}${separator}cache`,
-    downloadRoot: normalized.downloadRoot || paths.defaultMusicRoot,
-    managedDownloadRoots: normalizePaths(paths.managedDownloadRoots),
-    completedDownloadPaths: normalizePaths(paths.completedDownloadPaths),
+    cacheRoot: expand(normalized.cacheRoot) || `${paths.pluginRoot}${separator}cache`,
+    downloadRoot: expand(normalized.downloadRoot || paths.defaultMusicRoot),
+    managedDownloadRoots: normalizePaths(paths.managedDownloadRoots).map(expand),
+    completedDownloadPaths: normalizePaths(paths.completedDownloadPaths).map(expand),
     cacheLimitBytes: normalized.cacheLimitBytes,
   };
 }

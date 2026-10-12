@@ -143,6 +143,112 @@ func walkExistingComponents(path string) (string, error) {
 	return current, nil
 }
 
+// ExpandHome replaces a leading ~, ~/ or ~\ with the current user's home
+// directory. Other paths, including ~user, are returned unchanged.
+func ExpandHome(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	if hasTraversalComponent(path) {
+		return "", fmt.Errorf("path traversal is not allowed")
+	}
+	if hasWindowsDeviceNamespace(path) {
+		return "", fmt.Errorf("windows device namespaces are not allowed")
+	}
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, `~\`) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	home = strings.TrimRight(home, `/\`)
+	if home == "" {
+		return "", fmt.Errorf("resolve home directory: home directory is empty")
+	}
+	if path == "~" {
+		return home, nil
+	}
+	rest := strings.TrimLeft(path[2:], `/\`)
+	if rest == "" {
+		return home, nil
+	}
+	return home + string(filepath.Separator) + rest, nil
+}
+
+// CanonicalDirectory resolves a download root to a real directory path.
+// A leading home shortcut is expanded, ".." components and Windows device
+// namespaces are rejected, and symbolic links in the existing prefix are
+// resolved. Missing trailing components are preserved so the caller can
+// create them. The result is idempotent for a path that is already real.
+func CanonicalDirectory(path string) (string, error) {
+	expanded, err := ExpandHome(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(expanded) == "" {
+		return "", fmt.Errorf("directory path is required")
+	}
+	if hasWindowsDeviceNamespace(expanded) {
+		return "", fmt.Errorf("windows device namespaces are not allowed")
+	}
+	if hasTraversalComponent(expanded) {
+		return "", fmt.Errorf("path traversal is not allowed")
+	}
+	absolute, err := filepath.Abs(filepath.Clean(expanded))
+	if err != nil {
+		return "", fmt.Errorf("resolve directory path: %w", err)
+	}
+	nearest, err := longestExistingPrefix(absolute)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(nearest)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize directory: %w", err)
+	}
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", fmt.Errorf("stat directory: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("path is not a directory")
+	}
+	if nearest == absolute {
+		return canonical, nil
+	}
+	tail, err := filepath.Rel(nearest, absolute)
+	if err != nil || tail == "." || filepath.IsAbs(tail) || hasTraversalComponent(tail) {
+		return "", fmt.Errorf("resolve directory path")
+	}
+	return filepath.Join(canonical, tail), nil
+}
+
+func longestExistingPrefix(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("path is not absolute")
+	}
+	current := cleaned
+	for {
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return current, nil
+			}
+			return "", fmt.Errorf("path is not a directory")
+		}
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("lstat %q: %w", current, err)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("directory path does not exist")
+		}
+		current = parent
+	}
+}
+
 func hasWindowsDeviceNamespace(value string) bool {
 	normalized := strings.ReplaceAll(value, "/", "\\")
 	upper := strings.ToUpper(normalized)

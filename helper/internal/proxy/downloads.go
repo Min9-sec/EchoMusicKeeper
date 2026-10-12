@@ -38,7 +38,11 @@ func (manager *Manager) ExportWhenComplete(key, downloadRoot string) (model.Task
 	if err != nil {
 		return model.Task{}, err
 	}
-	directory, err := security.OpenDirectory(downloadRoot, true)
+	canonicalRoot, err := security.CanonicalDirectory(downloadRoot)
+	if err != nil {
+		return model.Task{}, fmt.Errorf("open download root: %w", err)
+	}
+	directory, err := security.OpenDirectory(canonicalRoot, true)
 	if err != nil {
 		return model.Task{}, fmt.Errorf("open download root: %w", err)
 	}
@@ -591,6 +595,12 @@ func (reader *downloadProgressReader) Read(buffer []byte) (int, error) {
 	return read, err
 }
 
+func (manager *Manager) DownloadRoot() string {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	return manager.downloadRoot
+}
+
 func (manager *Manager) SetDownloadRoots(current string, managed []string) error {
 	currentRoot, currentInfo, err := validatedDownloadRoot(current, true)
 	if err != nil {
@@ -706,7 +716,11 @@ func validatedDownloadRoot(root string, create bool) (string, os.FileInfo, error
 	if strings.TrimSpace(root) == "" {
 		return "", nil, fmt.Errorf("download root is required")
 	}
-	directory, err := security.OpenDirectory(root, create)
+	canonical, err := security.CanonicalDirectory(root)
+	if err != nil {
+		return "", nil, err
+	}
+	directory, err := security.OpenDirectory(canonical, create)
 	if err != nil {
 		return "", nil, fmt.Errorf("open download root: %w", err)
 	}

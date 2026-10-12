@@ -72,6 +72,9 @@ func run(arguments []string) error {
 	if err := manager.SetDownloadRoots(configuration.downloadRoot, nil); err != nil {
 		return fmt.Errorf("configure download root: %w", err)
 	}
+	if canonicalRoot := manager.DownloadRoot(); canonicalRoot != "" {
+		configuration.downloadRoot = canonicalRoot
+	}
 	if err := manager.SetDownloadRecords(nil); err != nil {
 		return fmt.Errorf("restore download records: %w", err)
 	}
@@ -165,7 +168,7 @@ func parseFlags(arguments []string) (options, error) {
 	flags.StringVar(&result.token, "token", "", "control bearer token")
 	flags.StringVar(&result.pluginRoot, "plugin-root", "", "absolute plugin root")
 	flags.StringVar(&result.cacheRoot, "cache-root", "", "absolute cache root")
-	flags.StringVar(&result.downloadRoot, "download-root", "", "absolute download root")
+	flags.StringVar(&result.downloadRoot, "download-root", "", "absolute or home-relative download root")
 	flags.Int64Var(&result.cacheLimitBytes, "cache-limit-bytes", -1, "cache capacity in bytes")
 	if err := flags.Parse(arguments); err != nil {
 		return options{}, err
@@ -186,7 +189,7 @@ func parseFlags(arguments []string) (options, error) {
 		return options{}, err
 	}
 	if result.downloadRoot != "" {
-		if err := requireAbsolute("--download-root", result.downloadRoot); err != nil {
+		if err := requireDownloadRoot("--download-root", result.downloadRoot); err != nil {
 			return options{}, err
 		}
 	}
@@ -194,6 +197,20 @@ func parseFlags(arguments []string) (options, error) {
 		return options{}, fmt.Errorf("--cache-limit-bytes is required and must not be negative")
 	}
 	return result, nil
+}
+
+func requireDownloadRoot(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	if filepath.IsAbs(value) || isHomeShortcut(value) {
+		return nil
+	}
+	return fmt.Errorf("%s must be absolute", name)
+}
+
+func isHomeShortcut(value string) bool {
+	return value == "~" || strings.HasPrefix(value, "~/") || strings.HasPrefix(value, `~\`)
 }
 
 func requireAbsolute(name, value string) error {

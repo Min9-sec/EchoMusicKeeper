@@ -53,6 +53,32 @@ func TestParseFlagsRequiresSecurityAndStorageArguments(t *testing.T) {
 	}
 }
 
+func TestParseFlagsAcceptsHomeDownloadRoot(t *testing.T) {
+	absolute := t.TempDir()
+	configuration, err := parseFlags([]string{
+		"--port", "43123", "--token", "secret",
+		"--plugin-root", absolute, "--cache-root", filepath.Join(absolute, "cache"),
+		"--download-root", "~/Music", "--cache-limit-bytes", "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.downloadRoot != "~/Music" {
+		t.Fatalf("download root = %q", configuration.downloadRoot)
+	}
+
+	for _, downloadRoot := range []string{"Music", "~other/Music", "relative/cache"} {
+		_, err := parseFlags([]string{
+			"--port", "43123", "--token", "secret",
+			"--plugin-root", absolute, "--cache-root", filepath.Join(absolute, "cache"),
+			"--download-root", downloadRoot, "--cache-limit-bytes", "1",
+		})
+		if err == nil || !strings.Contains(err.Error(), "--download-root must be absolute") {
+			t.Fatalf("download root %q error = %v", downloadRoot, err)
+		}
+	}
+}
+
 func TestParseFlagsRejectsRelativeRoots(t *testing.T) {
 	_, err := parseFlags([]string{
 		"--port", "43123", "--token", "secret", "--plugin-root", "relative",

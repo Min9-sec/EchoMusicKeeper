@@ -70,7 +70,11 @@ func copyAtomicFrom(ctx context.Context, source io.Reader, sourceBytes int64, ro
 	if source == nil || sourceBytes < 0 {
 		return "", fmt.Errorf("valid export source and byte count are required")
 	}
-	directory, err := security.OpenDirectory(root, true)
+	canonicalRoot, err := security.CanonicalDirectory(root)
+	if err != nil {
+		return "", fmt.Errorf("open download root: %w", err)
+	}
+	directory, err := security.OpenDirectory(canonicalRoot, true)
 	if err != nil {
 		return "", fmt.Errorf("open download root: %w", err)
 	}
@@ -113,6 +117,9 @@ func CopyAtomicTo(ctx context.Context, source io.Reader, sourceBytes int64, dire
 	}
 	if written != sourceBytes {
 		return "", fmt.Errorf("copied byte count %d does not match source size %d", written, sourceBytes)
+	}
+	if err := output.Chmod(0o644); err != nil {
+		return "", fmt.Errorf("publish download permissions: %w", err)
 	}
 	if err := output.Sync(); err != nil {
 		return "", fmt.Errorf("sync temporary download: %w", err)

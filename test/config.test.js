@@ -28,6 +28,48 @@ test("clamps cache size and normalizes paths", () => {
   );
 });
 
+test("expands a home download root and keeps absolute macOS paths", () => {
+  assert.equal(
+    toHelperConfig({ downloadRoot: "~/Music" }, {
+      pluginRoot: "/Users/me/Plugins/echo-music-keeper",
+      defaultMusicRoot: "",
+      separator: "/",
+    }).downloadRoot,
+    "~/Music",
+  );
+  assert.deepEqual(
+    toHelperConfig({ downloadRoot: "~/Music/周杰伦 专辑" }, {
+      pluginRoot: "/Users/me/Plugins/echo-music-keeper",
+      home: "/Users/me",
+      defaultMusicRoot: "",
+      separator: "/",
+    }),
+    {
+      cacheRoot: "/Users/me/Plugins/echo-music-keeper/cache",
+      downloadRoot: "/Users/me/Music/周杰伦 专辑",
+      managedDownloadRoots: [],
+      completedDownloadPaths: [],
+      cacheLimitBytes: GIB,
+    },
+  );
+  const spaced = "/Users/me/Music/My Songs/周杰伦 专辑";
+  assert.equal(
+    toHelperConfig({ downloadRoot: spaced }, {
+      pluginRoot: "/Users/me/Plugins/echo-music-keeper",
+      defaultMusicRoot: "/Users/me/Music",
+      separator: "/",
+    }).downloadRoot,
+    spaced,
+  );
+  assert.equal(
+    toHelperConfig({ downloadRoot: "~/Music" }, {
+      pluginRoot: "C:\\Plugins\\echo-music-keeper",
+      defaultMusicRoot: "C:\\Users\\me\\Music",
+    }).downloadRoot,
+    "C:\\Users\\me\\Music",
+  );
+});
+
 test("serializes exact helper configuration keys", () => {
   assert.deepEqual(
     toHelperConfig(normalizeSettings(null), {

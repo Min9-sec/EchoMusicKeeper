@@ -4,6 +4,15 @@ const STORAGE_KEY = "echo-music-keeper-settings";
 const DOWNLOADS_KEY = "echo-music-keeper-downloads";
 const parentPath = (path) => String(path ?? "").replace(/[\\/][^\\/]*$/, "");
 
+function selectedDirectory(selected) {
+  if (typeof selected === "string") return selected.trim();
+  if (!selected || typeof selected !== "object" || selected.canceled) return "";
+  const paths = Array.isArray(selected.paths) ? selected.paths : [];
+  const fromPaths = paths.find((item) => typeof item === "string" && item.trim());
+  if (fromPaths) return fromPaths.trim();
+  return typeof selected.path === "string" ? selected.path.trim() : "";
+}
+
 function hostComponent(ctx, name, fallback) {
   const loader = ctx?.ui?.components?.[name];
   return typeof ctx?.vue?.defineAsyncComponent === "function" && typeof loader === "function"
@@ -42,7 +51,7 @@ export function createSettingsComponent(ctx, runtime, settingsRef) {
       };
       const choose = async (name) => {
         const selected = await ctx?.dialog?.selectDirectory?.();
-        const path = typeof selected === "string" ? selected : selected?.path;
+        const path = selectedDirectory(selected);
         if (!path) return;
         if (name === "cacheRoot") await changeCacheRoot(path);
         else await save({ ...settingsRef.value, [name]: path });

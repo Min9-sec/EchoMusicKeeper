@@ -140,6 +140,83 @@ func (manager *Manager) CompleteCachePath(key string) (string, bool, error) {
 	return path, true, nil
 }
 
+// PlaybackCachePath resolves a local file that can be played without a remote
+// URL. Complete entries delegate to CompleteCachePath. A partial entry is
+// playable when a contiguous range starts at byte 0 and the on-disk prefix
+// matches the indexed size. Partials are not touched, and a partial that does
+// not start at byte 0 stays pathless.
+func (manager *Manager) PlaybackCachePath(key string) (string, bool, error) {
+	validated, err := validateCacheKey(key)
+	if err != nil {
+		return "", false, err
+	}
+	index, _, finish, err := manager.beginCacheControl()
+	if err != nil {
+		return "", false, err
+	}
+	entry, found, lookupErr := index.Lookup(validated)
+	finish()
+	if lookupErr != nil {
+		return "", false, lookupErr
+	}
+	if !found {
+		return "", false, nil
+	}
+	if entry.Complete {
+		return manager.CompleteCachePath(validated)
+	}
+	if !partialPrefixPlayable(entry) {
+		return "", false, nil
+	}
+	index, _, finish, err = manager.beginCacheControl()
+	if err != nil {
+		return "", false, err
+	}
+	entry, found, lookupErr = index.Lookup(validated)
+	if lookupErr != nil {
+		finish()
+		return "", false, lookupErr
+	}
+	if !found || !partialPrefixPlayable(entry) {
+		becameComplete := found && entry.Complete
+		finish()
+		if becameComplete {
+			return manager.CompleteCachePath(validated)
+		}
+		return "", false, nil
+	}
+	info, statErr := index.StatFile(entry.RelativePath)
+	finish()
+	if statErr != nil {
+		if cache.IsStaleFileError(statErr) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("validate partial cache file: %w", statErr)
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() != entry.Size {
+		return "", false, nil
+	}
+	root := index.Root()
+	path := filepath.Join(root, filepath.FromSlash(entry.RelativePath))
+	relative, relErr := filepath.Rel(root, path)
+	if relErr != nil || relative == "." || !filepath.IsLocal(relative) || !filepath.IsAbs(path) {
+		return "", false, fmt.Errorf("validated cache entry did not resolve beneath the current absolute root")
+	}
+	return path, true, nil
+}
+
+func partialPrefixPlayable(entry cache.Entry) bool {
+	if entry.Complete || entry.Size <= 0 {
+		return false
+	}
+	for _, byteRange := range entry.Ranges {
+		if byteRange.Start == 0 && byteRange.End > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (manager *Manager) DeleteCache(key string) (bool, error) {
 	validated, err := validateCacheKey(key)
 	if err != nil {

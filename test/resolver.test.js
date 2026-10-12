@@ -501,3 +501,188 @@ test("matches both current and documented helper runtime status contracts", () =
   assert.equal(createAudioResolver(ctx, { status: () => ({ state: "online" }), client: {} }, { value: {} }).match({ track, effect: "none" }), true);
   assert.equal(createAudioResolver(ctx, { status: { value: "ready" }, client: {} }, { value: {} }).match({ track, effect: "none" }), true);
 });
+
+const macDownloadPath = "/Users/me/Music/周杰伦 专辑/Song Name.mp3";
+
+function downloadRecords(records) {
+  return { records: { value: records } };
+}
+
+test("plays a permanent download while the helper is offline", async () => {
+  let lookups = 0;
+  const downloads = downloadRecords([{
+    key: `${catalogHash}.320.none`, trackId: "track-1", quality: "320", path: macDownloadPath,
+  }]);
+  const offlineTrack = { ...track, id: "track-1" };
+  const ctx = context({ kugou: { music: { getSongPrivilegeLite: async () => assert.fail("offline playback must not call Kugou") } } });
+  const runtime = { status: () => ({ state: "offline" }), client: { cacheLookup: async () => { lookups += 1; } } };
+  const result = await resolveCachedOrProxy({ ctx, runtime, downloads, track: offlineTrack, quality: "320" });
+  assert.deepEqual(result, { url: `file://${macDownloadPath}`, quality: "320", effect: "none" });
+  assert.equal(lookups, 0);
+  const resolver = createAudioResolver(ctx, runtime, { value: {} }, null, downloads);
+  assert.equal(resolver.match({ track: offlineTrack, effect: "none" }), true);
+  assert.equal(resolver.match({ track: offlineTrack, effect: "spatial" }), false);
+});
+
+test("returns null when a downloaded file was moved and the helper is offline", async () => {
+  const downloads = downloadRecords([
+    { key: `${catalogHash}.320.none`, quality: "320", path: macDownloadPath, missing: true },
+    { key: `${catalogHash}.flac.none`, quality: "flac", path: "/Users/me/Music/moved.flac" },
+  ]);
+  const ctx = context({ fs: { getFileUrl: async () => ({ ok: false }) } });
+  const runtime = { status: () => ({ state: "offline" }), client: { cacheLookup: async () => assert.fail("offline playback must not query cache") } };
+  const result = await resolveCachedOrProxy({ ctx, runtime, downloads, track, quality: "flac" });
+  assert.equal(result, null);
+  const resolver = createAudioResolver(ctx, runtime, { value: {} }, null, downloads);
+  assert.equal(resolver.match({ track, effect: "none" }), true);
+  const missingOnly = downloadRecords([{ key: `${catalogHash}.320.none`, quality: "320", path: macDownloadPath, missing: true }]);
+  assert.equal(createAudioResolver(ctx, runtime, { value: {} }, null, missingOnly).match({ track, effect: "none" }), false);
+});
+
+test("falls back to another complete cached quality without contacting Kugou", async () => {
+  const flacKey = `${actualHash}.flac.none`;
+  const flacPath = "/Users/me/Music/Cache/song.flac";
+  let privilegeCalls = 0;
+  const calls = [];
+  const result = await resolveCachedOrProxy({
+    ctx: context({ kugou: { music: { getSongPrivilegeLite: async () => { privilegeCalls += 1; } } } }),
+    runtime: onlineRuntime({
+      cacheLookup: async (request) => {
+        calls.push(request);
+        if (request.key === flacKey) {
+          return {
+            status: "complete", key: flacKey, path: flacPath,
+            track: { key: flacKey, catalogHash, hash: actualHash, requestedQuality: "flac", quality: "flac", effect: "none" },
+          };
+        }
+        return { status: "miss" };
+      },
+      cacheList: async () => ({ items: [{
+        key: flacKey, status: "complete",
+        track: { catalogHash, hash: actualHash, quality: "flac" },
+      }] }),
+    }),
+    settings: { autoCache: true }, track, quality: "320",
+  });
+  assert.deepEqual(result, { url: `file://${flacPath}`, quality: "flac", effect: "none" });
+  assert.equal(privilegeCalls, 0);
+  assert.deepEqual(calls.map((request) => request.key ?? request.requestedQuality), ["320", flacKey]);
+});
+
+test("uses a saved download before a network error can run", async () => {
+  let privilegeCalls = 0;
+  const result = await resolveCachedOrProxy({
+    ctx: context({ kugou: { music: { getSongPrivilegeLite: async () => { privilegeCalls += 1; throw new Error("network down"); } } } }),
+    runtime: onlineRuntime({ cacheLookup: async () => ({ status: "miss" }) }),
+    downloads: downloadRecords([{ key: `${catalogHash}.320.none`, quality: "320", path: macDownloadPath }]),
+    settings: { autoCache: true }, track, quality: "320",
+  });
+  assert.deepEqual(result, { url: `file://${macDownloadPath}`, quality: "320", effect: "none" });
+  assert.equal(privilegeCalls, 0);
+});
+
+test("falls back to a partial cache when source resolution throws or times out", async () => {
+  const warnings = [];
+  const partialKey = `${catalogHash}.320.none`;
+  const partialPath = "/Users/me/Library/Caches/echo-music-keeper/song.part";
+  const client = {
+    cacheLookup: async (request) => request.key ? {
+      status: "partial", key: partialKey, path: partialPath, ranges: [{ start: 0, end: 64 }],
+      track: { key: partialKey, catalogHash, hash: catalogHash, requestedQuality: "320", quality: "320", effect: "none" },
+    } : { status: "miss" },
+    cacheList: async () => ({ items: [{
+      key: partialKey, status: "partial", ranges: [{ start: 0, end: 64 }],
+      track: { catalogHash, hash: catalogHash, quality: "320" },
+    }] }),
+  };
+  const thrown = await resolveCachedOrProxy({
+    ctx: context({ kugou: { music: {
+      getSongPrivilegeLite: async () => { throw new Error("network down"); },
+      getSongUrl: async () => ({ url: "https://cdn.example/song.mp3" }),
+    } } }),
+    runtime: onlineRuntime(client),
+    settings: { autoCache: true }, track, quality: "320", warn: () => warnings.push("warned"),
+  });
+  assert.deepEqual(thrown, { url: `file://${partialPath}`, quality: "320", effect: "none" });
+
+  const started = Date.now();
+  const timedOut = await resolveCachedOrProxy({
+    ctx: context({ kugou: { music: {
+      getSongPrivilegeLite: () => new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("late network failure")), 40);
+      }),
+      getSongUrl: async () => ({ url: "https://cdn.example/song.mp3" }),
+    } } }),
+    runtime: onlineRuntime(client),
+    settings: { autoCache: true }, track, quality: "320", sourceTimeoutMs: 20,
+  });
+  assert.ok(Date.now() - started < 1000);
+  assert.deepEqual(timedOut, { url: `file://${partialPath}`, quality: "320", effect: "none" });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(warnings.length, 0);
+});
+
+test("plays a partial cache prefix when source resolution fails", async () => {
+  const partialKey = `${catalogHash}.320.none`;
+  const partialPath = "/Users/me/Library/Caches/echo-music-keeper/song.part";
+  let privilegeCalls = 0;
+  const result = await resolveCachedOrProxy({
+    ctx: context({ kugou: { music: {
+      getSongPrivilegeLite: async () => { privilegeCalls += 1; return null; },
+      getSongUrl: async () => assert.fail("must not request a URL when privilege fails"),
+    } } }),
+    runtime: onlineRuntime({
+      cacheLookup: async (request) => request.key ? {
+        status: "partial", key: partialKey, path: partialPath, ranges: [{ start: 0, end: 128 }],
+        track: { key: partialKey, catalogHash, hash: catalogHash, requestedQuality: "320", quality: "320", effect: "none" },
+      } : { status: "miss" },
+      cacheList: async () => ({ items: [{
+        key: partialKey, status: "partial", ranges: [{ start: 0, end: 128 }],
+        track: { catalogHash, hash: catalogHash, quality: "320" },
+      }] }),
+    }),
+    settings: { autoCache: true }, track, quality: "320",
+  });
+  assert.deepEqual(result, { url: `file://${partialPath}`, quality: "320", effect: "none" });
+  assert.equal(privilegeCalls, 1);
+});
+
+test("keeps a non-playable partial offline and continues to the network when a download file is missing", async () => {
+  const partialKey = `${catalogHash}.320.none`;
+  let privilegeCalls = 0;
+  let sessions = 0;
+  const partialOnly = await resolveCachedOrProxy({
+    ctx: context({ kugou: { music: {
+      getSongPrivilegeLite: async () => null,
+      getSongUrl: async () => ({ url: "https://cdn.example/song.mp3" }),
+    } } }),
+    runtime: onlineRuntime({
+      cacheLookup: async () => ({ status: "miss" }),
+      cacheList: async () => ({ items: [{
+        key: partialKey, status: "partial", ranges: [{ start: 64, end: 128 }],
+        track: { catalogHash, hash: catalogHash, quality: "320" },
+      }] }),
+    }),
+    settings: { autoCache: true }, track, quality: "320",
+  });
+  assert.equal(partialOnly, null);
+
+  const result = await resolveCachedOrProxy({
+    ctx: context({
+      fs: { getFileUrl: async (path) => path === macDownloadPath ? { ok: false } : { ok: true, url: `file://${path}` } },
+      kugou: { music: {
+        getSongPrivilegeLite: async () => { privilegeCalls += 1; return { data: [{ relate_goods: [{ quality: "320", hash: actualHash }] }] }; },
+        getSongUrl: async () => ({ url: "https://cdn.example/song.mp3" }),
+      } },
+    }),
+    runtime: onlineRuntime({
+      cacheLookup: async () => ({ status: "miss" }),
+      createSession: async () => { sessions += 1; return { playUrl: "http://127.0.0.1/stream" }; },
+    }),
+    downloads: downloadRecords([{ key: `${catalogHash}.320.none`, quality: "320", path: macDownloadPath }]),
+    settings: { autoCache: true }, track, quality: "320",
+  });
+  assert.equal(result?.url, "http://127.0.0.1/stream");
+  assert.equal(privilegeCalls, 1);
+  assert.equal(sessions, 1);
+});

@@ -545,22 +545,52 @@ func TestCacheLookupUsesCustomAndMigratedAbsoluteRootsAndValidatesFiles(t *testi
 	}
 }
 
-func TestCacheLookupLeavesPartialAndMissPathsEmpty(t *testing.T) {
+func TestCacheLookupExposesPlayablePartialPathAndLeavesMissEmpty(t *testing.T) {
 	fixture := newTestFixture(t, Options{})
 	defer fixture.cleanup()
 	partial := addPartialServerEntry(t, fixture.index, testHash, []byte("partial"))
-	for name, request := range map[string]model.CacheLookupRequest{
-		"partial": {Key: partial.Key},
-		"miss":    {Key: "fedcba9876543210.320.none"},
-	} {
-		response := serveJSONAuthorized(fixture.handler, http.MethodPost, "/v1/cache/lookup", request)
-		var lookup model.CacheLookup
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &lookup) != nil {
-			t.Fatalf("%s lookup = %d: %s", name, response.Code, response.Body.String())
-		}
-		if lookup.Status != name || lookup.Path != "" {
-			t.Fatalf("%s lookup = %+v", name, lookup)
-		}
+	before := fixture.index.Snapshot()[partial.Key].LastAccessedAt
+	response := serveJSONAuthorized(fixture.handler, http.MethodPost, "/v1/cache/lookup", model.CacheLookupRequest{Key: partial.Key})
+	var lookup model.CacheLookup
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &lookup) != nil {
+		t.Fatalf("partial lookup = %d: %s", response.Code, response.Body.String())
+	}
+	if lookup.Status != "partial" || !filepath.IsAbs(lookup.Path) {
+		t.Fatalf("partial lookup = %+v", lookup)
+	}
+	if contents, err := os.ReadFile(lookup.Path); err != nil || string(contents) != "partial" {
+		t.Fatalf("partial contents = %q, %v", contents, err)
+	}
+	if got := fixture.index.Snapshot()[partial.Key].LastAccessedAt; !got.Equal(before) {
+		t.Fatalf("partial last accessed = %v, want %v", got, before)
+	}
+
+	response = serveJSONAuthorized(fixture.handler, http.MethodPost, "/v1/cache/lookup", model.CacheLookupRequest{Key: "fedcba9876543210.320.none"})
+	lookup = model.CacheLookup{}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &lookup) != nil {
+		t.Fatalf("miss lookup = %d: %s", response.Code, response.Body.String())
+	}
+	if lookup.Status != "miss" || lookup.Path != "" {
+		t.Fatalf("miss lookup = %+v", lookup)
+	}
+}
+
+func TestCacheLookupLeavesNonPlayablePartialPathEmpty(t *testing.T) {
+	fixture := newTestFixture(t, Options{})
+	defer fixture.cleanup()
+	partial := addPartialServerEntry(t, fixture.index, testHash, []byte("offset"))
+	entry := fixture.index.Snapshot()[partial.Key]
+	entry.Ranges = []model.ByteRange{{Start: 32, End: 32 + int64(len("offset"))}}
+	if err := fixture.index.Upsert(partial.Key, entry); err != nil {
+		t.Fatal(err)
+	}
+	response := serveJSONAuthorized(fixture.handler, http.MethodPost, "/v1/cache/lookup", model.CacheLookupRequest{Key: partial.Key})
+	var lookup model.CacheLookup
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &lookup) != nil {
+		t.Fatalf("partial lookup = %d: %s", response.Code, response.Body.String())
+	}
+	if lookup.Status != "partial" || lookup.Path != "" {
+		t.Fatalf("non-playable partial lookup = %+v", lookup)
 	}
 }
 
@@ -936,6 +966,86 @@ func TestActivePlaybackAndManualDownloadShareCacheTaskAndExportOnce(t *testing.T
 	}
 	if regularFiles != 1 {
 		t.Fatalf("download root contains %d files, want exactly 1: %+v", regularFiles, files)
+	}
+}
+
+func TestDownloadFlowWritesIntoHomeMusicWithSpacesAndUnicode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	realMusic := filepath.Join(t.TempDir(), "real-music")
+	if err := os.MkdirAll(realMusic, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	musicLink := filepath.Join(home, "Music")
+	if err := os.Symlink(realMusic, musicLink); err != nil {
+		if mkdirErr := os.Mkdir(musicLink, 0o755); mkdirErr != nil {
+			t.Fatal(err)
+		}
+		realMusic = musicLink
+	}
+	media := []byte("keeper-e2e-download")
+	upstream, _ := testserver.NewRangeServer(media)
+	t.Cleanup(upstream.Close)
+	fixture := newTestFixture(t, Options{
+		HTTPClient: rewrittenTestClient(t, upstream.URL),
+		Config: model.Config{
+			DownloadRoot:    "~/Music/周杰伦 专辑",
+			CacheLimitBytes: 1 << 20,
+		},
+	})
+	defer fixture.cleanup()
+	track := model.TrackInfo{
+		Hash: testHash, CatalogHash: testHash, RequestedQuality: "320", Quality: "320",
+		Effect: "none", Extension: "mp3", Title: "七里香", Artist: "周杰伦",
+	}
+	created := serveJSONAuthorized(fixture.handler, http.MethodPost, "/v1/downloads", model.CreateSessionRequest{
+		Track: track, RemoteURL: "http://8.8.8.8/song.mp3",
+	})
+	var download model.Task
+	if created.Code != http.StatusAccepted || json.Unmarshal(created.Body.Bytes(), &download) != nil || download.ID == "" {
+		t.Fatalf("download create = %d: %s", created.Code, created.Body.String())
+	}
+	waitServerTaskState(t, fixture.manager, download.ID, model.TaskCompleted)
+	var completed model.Task
+	for _, task := range fixture.manager.Tasks() {
+		if task.ID == download.ID {
+			completed = task
+		}
+	}
+	if completed.OutputPath == "" || !strings.Contains(completed.OutputPath, "周杰伦 专辑") {
+		t.Fatalf("completed download = %+v", completed)
+	}
+	resolvedMusic, err := filepath.EvalSymlinks(realMusic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(completed.OutputPath, resolvedMusic+string(filepath.Separator)) {
+		t.Fatalf("download %q is outside %q", completed.OutputPath, resolvedMusic)
+	}
+	exported, err := os.ReadFile(completed.OutputPath)
+	if err != nil || !bytes.Equal(exported, media) {
+		t.Fatalf("exported bytes = %q, err = %v", exported, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(completed.OutputPath)
+		if statErr != nil || info.Mode().Perm()&0o444 != 0o444 {
+			t.Fatalf("download mode = %v, %v", info, statErr)
+		}
+	}
+	targetDir := filepath.Dir(completed.OutputPath)
+	files, err := os.ReadDir(targetDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regularFiles := 0
+	for _, file := range files {
+		if file.Type().IsRegular() {
+			regularFiles++
+		}
+	}
+	if regularFiles != 1 {
+		t.Fatalf("target directory contains %d files, want 1: %+v", regularFiles, files)
 	}
 }
 
