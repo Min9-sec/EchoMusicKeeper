@@ -62,9 +62,9 @@ export function createDownloadDialog(ctx, controller, track, options = {}) {
         h("section", { class: "echo-music-keeper-dialog", role: "dialog", "aria-label": "下载歌曲", "aria-busy": submitting.value, "aria-modal": "true" }, [
           h("header", { class: "echo-music-keeper-dialog__header" }, [h("h3", "下载歌曲"), Icon ? h(Icon, { icon: ctx?.icons?.iconArrowBarToDown ?? "tabler:download", width: 20, height: 20 }) : null]),
           h("p", `${track?.title ?? track?.songName ?? ""} ${track?.artist ?? track?.singerName ?? ""}`.trim()),
-          h(Select, { modelValue: selected.value, disabled: submitting.value, "onUpdate:modelValue": (value) => { selected.value = normalizeQuality(value) ?? selected.value; }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
+          h(Select, { class: "echo-music-keeper-dialog__quality", style: { width: "100%" }, modelValue: selected.value, disabled: submitting.value, "onUpdate:modelValue": (value) => { selected.value = normalizeQuality(value) ?? selected.value; }, options: qualities.map((quality) => ({ label: quality, value: quality, disabled: !available.has(quality) })) }),
           h("footer", { class: "echo-music-keeper-dialog__actions" }, [
-            h(Button, { disabled: submitting.value, onClick: close }, () => "取消"),
+            h(Button, { disabled: submitting.value, onClick: () => close() }, () => "取消"),
             h(Button, { type: "primary", loading: submitting.value, disabled: submitting.value, onClick: confirm }, () => submitting.value ? "正在解析…" : "下载"),
           ]),
         ]),

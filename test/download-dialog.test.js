@@ -44,6 +44,27 @@ test("download dialog wraps lazy host components and stays open after a failed r
   await buttons.at(-1).props.onClick();
   assert.deepEqual(requests, [[{ hash: "0123456789abcdef", title: "Song" }, "320"]]);
   assert.equal(closed, 0);
+  buttons[0].props.onClick();
+  assert.equal(closed, 1);
+});
+
+test("download dialog cancel closes after a synchronous host mount", () => {
+  const h = (type, props, children) => ({ type, props, children });
+  let tree;
+  let closed = 0;
+  createDownloadDialog({
+    vue: { h, ref: (value) => ({ value }), resolveComponent: () => null },
+    ui: {
+      teleport(component) {
+        tree = component.setup()();
+        return () => { closed += 1; };
+      },
+    },
+  }, { request: async () => null }, { hash: "0123456789abcdef", title: "Song" });
+
+  const cancel = nodes(tree).find((node) => node.type === "button");
+  cancel.props.onClick();
+  assert.equal(closed, 1);
 });
 
 test("download dialog exposes a pending state and suppresses duplicate submissions", async () => {
@@ -98,6 +119,8 @@ test("download dialog exposes a pending state and suppresses duplicate submissio
 test("download dialog is a fixed overlay and toasts when the host cannot mount it", () => {
   assert.match(ECHO_MUSIC_KEEPER_STYLES, /\.echo-music-keeper-dialog-host\{[^}]*position:fixed[^}]*z-index:1800/);
   assert.match(ECHO_MUSIC_KEEPER_STYLES, /\.echo-music-keeper-dialog-layer\{[^}]*position:fixed[^}]*z-index:1800/);
+  assert.match(ECHO_MUSIC_KEEPER_STYLES, /\.echo-music-keeper-dialog\{[^}]*width:min\(440px,calc\(100vw - 32px\)\)[^}]*padding:24px/);
+  assert.match(ECHO_MUSIC_KEEPER_STYLES, /\.echo-music-keeper-dialog__quality\{[^}]*width:100%[^}]*min-height:40px/);
   const h = (type, props, children) => ({ type, props, children });
   const warnings = [];
   const vue = { h, ref: (value) => ({ value }), resolveComponent: () => null };
@@ -120,6 +143,9 @@ test("download dialog is a fixed overlay and toasts when the host cannot mount i
   const dialog = nodes(tree).find((node) => node.props?.role === "dialog");
   assert.equal(dialog.props.class, "echo-music-keeper-dialog");
   assert.equal(dialog.props["aria-modal"], "true");
+  const select = nodes(tree).find((node) => node.type === "select");
+  assert.equal(select.props.class, "echo-music-keeper-dialog__quality");
+  assert.deepEqual(select.props.style, { width: "100%" });
   const backdrop = {};
   tree.props.onClick({ target: backdrop, currentTarget: backdrop });
   assert.equal(closed, 1);
