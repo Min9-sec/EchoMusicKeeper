@@ -300,6 +300,95 @@ async function resolveKugouSource(ctx, track, requestedQuality) {
   };
 }
 
+// src/ui/confirmation.js
+function createConfirmation(ctx) {
+  let active = null;
+  let disposed = false;
+  const vue = ctx?.vue ?? {};
+  const h = vue.h ?? ((type, props, children) => ({ type, props, children }));
+  function confirm({ title, content, confirmText = "\u786E\u5B9A", cancelText = "\u53D6\u6D88" }) {
+    if (disposed) return Promise.resolve(false);
+    active?.();
+    return new Promise((resolve) => {
+      let settled = false;
+      let unmount = null;
+      const previousFocus = typeof document !== "undefined" ? document.activeElement : null;
+      const onKey = (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          finish(false);
+        }
+      };
+      const finish = (accepted) => {
+        if (settled) return;
+        settled = true;
+        if (active === cancel) active = null;
+        if (typeof window !== "undefined") window.removeEventListener("keydown", onKey);
+        try {
+          unmount?.();
+        } finally {
+          previousFocus?.focus?.();
+          resolve(accepted === true);
+        }
+      };
+      const cancel = () => finish(false);
+      active = cancel;
+      const component = {
+        name: "EchoMusicKeeperConfirmation",
+        setup() {
+          vue.onBeforeUnmount?.(cancel);
+          return () => h("div", { class: "echo-music-keeper-dialog-layer", onClick: (event) => {
+            if (event.target === event.currentTarget) cancel();
+          } }, [
+            h("section", {
+              class: "echo-music-keeper-dialog",
+              role: "alertdialog",
+              "aria-modal": "true",
+              "aria-label": title,
+              tabindex: -1,
+              onVnodeMounted: (node) => node.el?.querySelector?.("button")?.focus?.(),
+              onKeydown: (event) => {
+                if (event.key !== "Tab") return;
+                const buttons = event.currentTarget.querySelectorAll("button");
+                if (!buttons.length) return;
+                const first = buttons[0], last = buttons[buttons.length - 1];
+                if (event.shiftKey && event.target === first) {
+                  event.preventDefault();
+                  last.focus();
+                } else if (!event.shiftKey && event.target === last) {
+                  event.preventDefault();
+                  first.focus();
+                }
+              }
+            }, [
+              h("h3", title),
+              h("p", content),
+              h("footer", { class: "echo-music-keeper-dialog__actions" }, [
+                h("button", { type: "button", class: "echo-music-keeper-confirm-button", onClick: cancel }, cancelText),
+                h("button", { type: "button", class: "echo-music-keeper-confirm-button", onClick: () => finish(true) }, confirmText)
+              ])
+            ])
+          ]);
+        }
+      };
+      try {
+        if (typeof window !== "undefined") window.addEventListener("keydown", onKey);
+        const mounted = ctx?.ui?.teleport?.(component, { className: "echo-music-keeper-dialog-host" });
+        if (typeof mounted !== "function") throw new Error("teleport unavailable");
+        unmount = mounted;
+        if (settled) unmount();
+      } catch {
+        ctx?.toast?.warning?.("\u65E0\u6CD5\u6253\u5F00\u786E\u8BA4\u7A97\u53E3\uFF0C\u8BF7\u91CD\u65B0\u542F\u7528\u63D2\u4EF6\u540E\u91CD\u8BD5\u3002");
+        finish(false);
+      }
+    });
+  }
+  return { confirm, dispose() {
+    disposed = true;
+    active?.();
+  } };
+}
+
 // src/ui/download-dialog.js
 var qualities = ["128", "320", "flac", "high", "super"];
 function hostComponent(ctx, name, fallback) {
@@ -453,6 +542,7 @@ function helperTrack(track, source) {
   };
 }
 function createDownloadController(ctx, runtime, settingsRef, options = {}) {
+  const confirmation = createConfirmation(ctx);
   const records = ref(ctx, []);
   const pending = /* @__PURE__ */ new Map();
   let activeDialog = null;
@@ -618,7 +708,8 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
   }
   async function remove(entry) {
     await ready;
-    if (disposed || !entry?.path || !await ctx?.dialog?.confirm?.({ title: "\u5220\u9664\u4E0B\u8F7D", content: "\u786E\u5B9A\u5220\u9664\u6B64\u4E0B\u8F7D\u6587\u4EF6\u5417\uFF1F" })) return false;
+    if (disposed || !entry?.path) return false;
+    if (!await confirmation.confirm({ title: "\u5220\u9664\u4E0B\u8F7D", content: "\u786E\u5B9A\u5220\u9664\u6B64\u4E0B\u8F7D\u6587\u4EF6\u5417\uFF1F" })) return false;
     if (disposed) return false;
     const client = clientFor(runtime);
     if (!client?.deleteDownload) {
@@ -705,6 +796,7 @@ function createDownloadController(ctx, runtime, settingsRef, options = {}) {
   }
   return Object.freeze({ request, remove, reveal, records, reconcile, reconcileTaskSnapshot, registerContextMenus, dispose() {
     disposed = true;
+    confirmation.dispose();
     activeDialog?.close?.();
     activeDialog = null;
     unsubscribeSnapshots?.();
@@ -1473,12 +1565,16 @@ function createTaskStore(ctx, runtime, timers = globalThis) {
     reveal: (target) => client()?.revealFile?.(typeof target === "string" ? { kind: "select", path: target } : target),
     deleteCache: async (entry) => {
       if (disposed) return;
-      await client()?.deleteCache?.(entry?.key ?? entry);
+      const active = client();
+      if (!active?.deleteCache) throw new Error("\u7F13\u5B58\u670D\u52A1\u672A\u8FDE\u63A5\uFF0C\u65E0\u6CD5\u5220\u9664\u7F13\u5B58\u3002");
+      await active.deleteCache(entry?.key ?? entry);
       if (!disposed) await refresh();
     },
     clearCache: async () => {
       if (disposed) return;
-      await client()?.clearCache?.();
+      const active = client();
+      if (!active?.clearCache) throw new Error("\u7F13\u5B58\u670D\u52A1\u672A\u8FDE\u63A5\uFF0C\u65E0\u6CD5\u6E05\u7A7A\u7F13\u5B58\u3002");
+      await active.clearCache();
       if (!disposed) await refresh();
     },
     dispose() {
@@ -1527,7 +1623,8 @@ function createManagementPage(ctx, taskStore, downloads) {
         reveal: icon(["iconFolderOpen", "iconFolder"], "tabler:folder-open"),
         remove: icon(["iconTrash", "iconX"], "tabler:trash")
       };
-      const confirm = async (message) => ctx?.dialog?.confirm?.({ title: "\u7F13\u5B58\u7BA1\u7406", content: message });
+      const confirmation = createConfirmation(ctx);
+      const confirm = (content) => confirmation.confirm({ title: "\u7F13\u5B58\u7BA1\u7406", content });
       const runAction = (action) => async () => {
         try {
           await action();
@@ -1547,7 +1644,10 @@ function createManagementPage(ctx, taskStore, downloads) {
           loading.value = false;
         });
       });
-      vue.onUnmounted?.(() => taskStore.setVisible(false));
+      vue.onUnmounted?.(() => {
+        confirmation.dispose();
+        taskStore.setVisible(false);
+      });
       const command = (title, action, iconValue) => h(Button, { class: "echo-music-keeper-icon-button", title, "aria-label": title, onClick: runAction(action) }, () => Icon ? h(Icon, { icon: iconValue, width: 16, height: 16 }) : title);
       const tabButton = (value, title) => h(Button, { class: { active: tab.value === value }, onClick: () => {
         tab.value = value;
@@ -1689,7 +1789,7 @@ function createSettingsComponent(ctx, runtime, settingsRef) {
 
 // src/ui/styles.js
 var ECHO_MUSIC_KEEPER_STYLES = `
-.echo-music-keeper-page{box-sizing:border-box;min-height:100%;padding:20px 24px 32px;color:var(--color-text-main,var(--text-color,#222))}.echo-music-keeper-tabs{display:flex;gap:4px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-tabs button{height:36px;padding:0 14px;border:0;border-radius:4px 4px 0 0;color:inherit;background:transparent;font-size:14px;font-weight:600}.echo-music-keeper-tabs button.active{color:var(--color-primary,var(--primary-color,#3b82f6));border-bottom:2px solid currentColor}.echo-music-keeper-section{max-width:1240px;padding-top:20px}.echo-music-keeper-task-list,.echo-music-keeper-entry-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task{min-height:72px;display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) 88px 56px 90px 132px;align-items:center;gap:12px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-entry{min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task__song,.echo-music-keeper-entry>div:first-child{min-width:0;display:grid;gap:4px}.echo-music-keeper-task__song strong,.echo-music-keeper-entry strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.echo-music-keeper-task__song span,.echo-music-keeper-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;opacity:.72}.echo-music-keeper-progress{height:6px;min-width:80px;background:linear-gradient(90deg,var(--color-primary,var(--primary-color,#3b82f6)) var(--progress),rgba(127,127,127,.18) var(--progress));border-radius:3px}.echo-music-keeper-task__progress{display:grid;grid-template-columns:minmax(80px,1fr) 40px;align-items:center;gap:8px;font-size:12px}.echo-music-keeper-task__actions{display:flex;justify-content:flex-end;gap:6px}.echo-music-keeper-icon-button{width:32px;height:32px;padding:0;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent;display:inline-flex;align-items:center;justify-content:center}.echo-music-keeper-icon-button svg{display:block}.echo-music-keeper-empty{padding:28px 0;margin:0;text-align:center;opacity:.72}.echo-music-keeper-subheading{margin:24px 0 10px;font-size:14px}.echo-music-keeper-cache-summary{display:grid;grid-template-columns:minmax(140px,1fr) auto auto;gap:14px;align-items:center;margin-bottom:18px}.echo-music-keeper-dialog-host{position:fixed;inset:0;z-index:1800;-webkit-app-region:no-drag}.echo-music-keeper-dialog-layer{position:fixed;inset:0;z-index:1800;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);-webkit-app-region:no-drag}.echo-music-keeper-dialog{box-sizing:border-box;position:relative;z-index:1;width:min(440px,calc(100vw - 32px));padding:24px;background:var(--color-bg-elevated,var(--background-color,#fff));border-radius:6px;box-shadow:0 18px 48px rgba(15,23,42,.28)}.echo-music-keeper-dialog__header,.echo-music-keeper-dialog__actions{display:flex;align-items:center;justify-content:space-between}.echo-music-keeper-dialog__quality{display:block;width:100%;min-width:0;min-height:40px}.echo-music-keeper-dialog__actions{justify-content:flex-end;gap:10px;margin-top:20px}.echo-music-keeper-settings{display:grid;gap:16px}.echo-music-keeper-settings label{display:grid;grid-template-columns:120px minmax(160px,1fr) auto;align-items:center;gap:10px}.echo-music-keeper-limit-input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin:0 0 0 130px;font-size:12px;line-height:1.5;opacity:.72;overflow-wrap:anywhere}.echo-music-keeper-settings__notice{margin-top:-6px}.echo-music-keeper-state.is-failed{color:#c2410c}.echo-music-keeper-state.is-needs-url{color:#b45309}@media(max-width:900px){.echo-music-keeper-page{padding:16px}.echo-music-keeper-task{grid-template-columns:minmax(180px,1fr) minmax(120px,1fr) 80px 112px}.echo-music-keeper-task>span:nth-of-type(2),.echo-music-keeper-task>span:nth-of-type(3){display:none}.echo-music-keeper-settings label{grid-template-columns:1fr;gap:6px}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin-left:0}.echo-music-keeper-cache-summary{grid-template-columns:1fr auto}.echo-music-keeper-cache-summary button{grid-column:1/-1;justify-self:start}}
+.echo-music-keeper-page{box-sizing:border-box;min-height:100%;padding:20px 24px 32px;color:var(--color-text-main,var(--text-color,#222))}.echo-music-keeper-tabs{display:flex;gap:4px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-tabs button{height:36px;padding:0 14px;border:0;border-radius:4px 4px 0 0;color:inherit;background:transparent;font-size:14px;font-weight:600}.echo-music-keeper-tabs button.active{color:var(--color-primary,var(--primary-color,#3b82f6));border-bottom:2px solid currentColor}.echo-music-keeper-section{max-width:1240px;padding-top:20px}.echo-music-keeper-task-list,.echo-music-keeper-entry-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task{min-height:72px;display:grid;grid-template-columns:minmax(220px,2fr) minmax(150px,1fr) 88px 56px 90px 132px;align-items:center;gap:12px;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-entry{min-height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:8px 0;border-bottom:1px solid var(--control-border,var(--border-color,#ddd))}.echo-music-keeper-task__song,.echo-music-keeper-entry>div:first-child{min-width:0;display:grid;gap:4px}.echo-music-keeper-task__song strong,.echo-music-keeper-entry strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.echo-music-keeper-task__song span,.echo-music-keeper-entry span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;opacity:.72}.echo-music-keeper-progress{height:6px;min-width:80px;background:linear-gradient(90deg,var(--color-primary,var(--primary-color,#3b82f6)) var(--progress),rgba(127,127,127,.18) var(--progress));border-radius:3px}.echo-music-keeper-task__progress{display:grid;grid-template-columns:minmax(80px,1fr) 40px;align-items:center;gap:8px;font-size:12px}.echo-music-keeper-task__actions{display:flex;justify-content:flex-end;gap:6px}.echo-music-keeper-icon-button{width:32px;height:32px;padding:0;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent;display:inline-flex;align-items:center;justify-content:center}.echo-music-keeper-icon-button svg{display:block}.echo-music-keeper-empty{padding:28px 0;margin:0;text-align:center;opacity:.72}.echo-music-keeper-subheading{margin:24px 0 10px;font-size:14px}.echo-music-keeper-cache-summary{display:grid;grid-template-columns:minmax(140px,1fr) auto auto;gap:14px;align-items:center;margin-bottom:18px}.echo-music-keeper-dialog-host{position:fixed;inset:0;z-index:1800;-webkit-app-region:no-drag}.echo-music-keeper-dialog-layer{position:fixed;inset:0;z-index:1800;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.45);-webkit-app-region:no-drag}.echo-music-keeper-dialog{box-sizing:border-box;position:relative;z-index:1;width:min(440px,calc(100vw - 32px));padding:24px;background:var(--color-bg-elevated,var(--background-color,#fff));border-radius:6px;box-shadow:0 18px 48px rgba(15,23,42,.28)}.echo-music-keeper-dialog__header,.echo-music-keeper-dialog__actions{display:flex;align-items:center;justify-content:space-between}.echo-music-keeper-dialog__quality{display:block;width:100%;min-width:0;min-height:40px}.echo-music-keeper-dialog__actions{justify-content:flex-end;gap:10px;margin-top:20px}.echo-music-keeper-confirm-button{min-height:32px;padding:0 14px;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent;font:inherit;cursor:pointer}.echo-music-keeper-confirm-button:focus-visible{outline:2px solid var(--color-primary,var(--primary-color,#3b82f6));outline-offset:2px}.echo-music-keeper-settings{display:grid;gap:16px}.echo-music-keeper-settings label{display:grid;grid-template-columns:120px minmax(160px,1fr) auto;align-items:center;gap:10px}.echo-music-keeper-limit-input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--control-border,var(--border-color,#ddd));border-radius:4px;color:inherit;background:transparent}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin:0 0 0 130px;font-size:12px;line-height:1.5;opacity:.72;overflow-wrap:anywhere}.echo-music-keeper-settings__notice{margin-top:-6px}.echo-music-keeper-state.is-failed{color:#c2410c}.echo-music-keeper-state.is-needs-url{color:#b45309}@media(max-width:900px){.echo-music-keeper-page{padding:16px}.echo-music-keeper-task{grid-template-columns:minmax(180px,1fr) minmax(120px,1fr) 80px 112px}.echo-music-keeper-task>span:nth-of-type(2),.echo-music-keeper-task>span:nth-of-type(3){display:none}.echo-music-keeper-settings label{grid-template-columns:1fr;gap:6px}.echo-music-keeper-settings__effective-path,.echo-music-keeper-settings__notice{margin-left:0}.echo-music-keeper-cache-summary{grid-template-columns:1fr auto}.echo-music-keeper-cache-summary button{grid-column:1/-1;justify-self:start}}
 `;
 
 // src/index.js

@@ -1,3 +1,5 @@
+import { createConfirmation } from "./confirmation.js";
+
 const bytes = (value) => {
   const amount = Number(value) || 0;
   if (amount < 1024) return `${amount} B`;
@@ -36,7 +38,8 @@ export function createManagementPage(ctx, taskStore, downloads) {
         reveal: icon(["iconFolderOpen", "iconFolder"], "tabler:folder-open"),
         remove: icon(["iconTrash", "iconX"], "tabler:trash"),
       };
-      const confirm = async (message) => ctx?.dialog?.confirm?.({ title: "缓存管理", content: message });
+      const confirmation = createConfirmation(ctx);
+      const confirm = (content) => confirmation.confirm({ title: "缓存管理", content });
       const runAction = (action) => async () => {
         try {
           await action();
@@ -51,7 +54,7 @@ export function createManagementPage(ctx, taskStore, downloads) {
         loading.value = false;
       };
       vue.onMounted?.(() => { taskStore.setVisible(true); void refresh().catch(() => { loading.value = false; }); });
-      vue.onUnmounted?.(() => taskStore.setVisible(false));
+      vue.onUnmounted?.(() => { confirmation.dispose(); taskStore.setVisible(false); });
       const command = (title, action, iconValue) => h(Button, { class: "echo-music-keeper-icon-button", title, "aria-label": title, onClick: runAction(action) }, () => Icon ? h(Icon, { icon: iconValue, width: 16, height: 16 }) : title);
       const tabButton = (value, title) => h(Button, { class: { active: tab.value === value }, onClick: () => { tab.value = value; } }, () => title);
       const taskRow = (task) => {

@@ -134,8 +134,20 @@ export function createTaskStore(ctx, runtime, timers = globalThis) {
     pause: (task) => action("pauseTask", task), resume: (task) => action("resumeTask", task),
     cancel: (task) => action("cancelTask", task), retry,
     reveal: (target) => client()?.revealFile?.(typeof target === "string" ? { kind: "select", path: target } : target),
-    deleteCache: async (entry) => { if (disposed) return; await client()?.deleteCache?.(entry?.key ?? entry); if (!disposed) await refresh(); },
-    clearCache: async () => { if (disposed) return; await client()?.clearCache?.(); if (!disposed) await refresh(); },
+    deleteCache: async (entry) => {
+      if (disposed) return;
+      const active = client();
+      if (!active?.deleteCache) throw new Error("缓存服务未连接，无法删除缓存。");
+      await active.deleteCache(entry?.key ?? entry);
+      if (!disposed) await refresh();
+    },
+    clearCache: async () => {
+      if (disposed) return;
+      const active = client();
+      if (!active?.clearCache) throw new Error("缓存服务未连接，无法清空缓存。");
+      await active.clearCache();
+      if (!disposed) await refresh();
+    },
     dispose() { disposed = true; if (timer) timers.clearInterval(timer); timer = null; snapshotListeners.clear(); },
   });
 }

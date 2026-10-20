@@ -22,7 +22,10 @@ function context(overrides = {}) {
   return {
     storage: { get: async () => stored, set: async (name, value) => { overrides.saved?.push([name, value]); } },
     fs: { getFileUrl: async () => ({ ok: true, url: "file:///song.mp3" }) },
-    dialog: { confirm: async () => true },
+    ui: { teleport(component) {
+      queueMicrotask(() => nodes(component.setup()()).find((node) => node.type === "button" && node.children === (overrides.accept === false ? "取消" : "确定")).props.onClick());
+      return () => {};
+    } },
     kugou: { music: {
       getSongPrivilegeLite: async () => ({ data: [{ relate_goods: [{ quality: "320", hash }] }] }),
       getSongUrl: async () => ({ url: "https://cdn.example/song.mp3" }),
@@ -207,7 +210,7 @@ test("download reconciliation marks missing files without dropping persisted rec
 
 test("download deletion requires confirmation before calling the approved delete endpoint", async () => {
   let deleted = 0;
-  const controller = createDownloadController(context({ stored: [record], dialog: { confirm: async () => false } }), {
+  const controller = createDownloadController(context({ stored: [record], accept: false }), {
     client: { deleteDownload: async () => { deleted += 1; } },
   }, { value: {} });
   await controller.remove(record);

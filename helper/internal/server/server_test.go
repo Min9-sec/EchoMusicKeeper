@@ -186,105 +186,42 @@ func TestHealthConfigBodyLimitAndStructuredErrors(t *testing.T) {
 	}
 }
 
-func TestRevealCommandUsesPlatformFileManager(t *testing.T) {
-	tests := []struct {
-		name       string
-		goos       string
-		kind       string
-		target     string
-		executable string
-		arguments  []string
-		wantErr    bool
-	}{
-		{name: "windows select", goos: "windows", kind: "select", target: `C:\Music\a.mp3`, executable: "explorer.exe", arguments: []string{`/select,C:\Music\a.mp3`}},
-		{name: "windows directory", goos: "windows", kind: "open-directory", target: `C:\Music`, executable: "explorer.exe", arguments: []string{`C:\Music`}},
-		{name: "darwin select", goos: "darwin", kind: "select", target: "/Users/me/Music/a.mp3", executable: "open", arguments: []string{"-R", "/Users/me/Music/a.mp3"}},
-		{name: "darwin directory", goos: "darwin", kind: "open-directory", target: "/Users/me/Music", executable: "open", arguments: []string{"/Users/me/Music"}},
-		{name: "unsupported platform", goos: "linux", kind: "select", target: "/home/me/a.mp3", wantErr: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			executable, arguments, err := revealCommandFor(test.goos, test.kind, test.target)
-			if test.wantErr {
-				if err == nil {
-					t.Fatalf("revealCommandFor(%q) = %q, %#v, want error", test.goos, executable, arguments)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("revealCommandFor(%q) error = %v", test.goos, err)
-			}
-			if executable != test.executable || len(arguments) != len(test.arguments) {
-				t.Fatalf("revealCommandFor(%q) = %q, %#v, want %q, %#v", test.goos, executable, arguments, test.executable, test.arguments)
-			}
-			for index := range arguments {
-				if arguments[index] != test.arguments[index] {
-					t.Fatalf("revealCommandFor(%q) arguments = %#v, want %#v", test.goos, arguments, test.arguments)
-				}
-			}
-		})
-	}
-}
-
-func TestRevealUsesExactAuthorizedTargetAndSeparateFileManagerArgument(t *testing.T) {
-	executable, expectedSelect, expectedOpen := "", []string(nil), []string(nil)
+func TestRevealUsesExactAuthorizedTarget(t *testing.T) {
 	downloadRoot := t.TempDir()
-	recorded := filepath.Join(downloadRoot, "recorded.mp3")
-	switch runtime.GOOS {
-	case "windows":
-		executable = "explorer.exe"
-		expectedSelect = []string{"/select," + recorded}
-		expectedOpen = []string{downloadRoot}
-	case "darwin":
-		executable = "open"
-		expectedSelect = []string{"-R", recorded}
-		expectedOpen = []string{downloadRoot}
-	default:
-		t.Skipf("file manager reveal is unavailable on %s", runtime.GOOS)
-	}
+	recorded := filepath.Join(downloadRoot, "中文 song, with spaces.mp3")
 	arbitrary := filepath.Join(downloadRoot, "arbitrary.mp3")
 	for _, path := range []string{recorded, arbitrary} {
 		if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var launchedExecutable string
-	var arguments []string
+	var revealedKind, revealedTarget string
+	var revealErr error
+	calls := 0
 	handler, cleanup := newTestHandler(t, Options{
 		Config: model.Config{DownloadRoot: downloadRoot, CompletedDownloadPaths: []string{recorded}},
-		LaunchProcess: func(name string, args ...string) error {
-			launchedExecutable = name
-			arguments = append([]string(nil), args...)
-			return nil
+		RevealFile: func(kind, target string) error {
+			calls++
+			revealedKind, revealedTarget = kind, target
+			return revealErr
 		},
 	})
 	defer cleanup()
-	arguments = nil
-	response := serveJSONAuthorized(handler, http.MethodPost, "/v1/files/reveal", map[string]string{"kind": "select", "path": recorded})
-	if response.Code != http.StatusAccepted || launchedExecutable != executable || !equalStrings(arguments, expectedSelect) {
-		t.Fatalf("select reveal = %d, %q, %#v, want %q, %#v: %s", response.Code, launchedExecutable, arguments, executable, expectedSelect, response.Body.String())
-	}
-	arguments = nil
-	response = serveJSONAuthorized(handler, http.MethodPost, "/v1/files/reveal", map[string]string{"kind": "open-directory", "path": downloadRoot})
-	if response.Code != http.StatusAccepted || !equalStrings(arguments, expectedOpen) {
-		t.Fatalf("directory reveal = %d, %#v, want %#v: %s", response.Code, arguments, expectedOpen, response.Body.String())
-	}
-	response = serveJSONAuthorized(handler, http.MethodPost, "/v1/files/reveal", map[string]string{"kind": "select", "path": arbitrary})
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("arbitrary reveal status = %d, want 400", response.Code)
-	}
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
+	for _, target := range []struct{ kind, path string }{{"select", recorded}, {"open-directory", downloadRoot}} {
+		response := serveJSONAuthorized(handler, http.MethodPost, "/v1/files/reveal", map[string]string{"kind": target.kind, "path": target.path})
+		if response.Code != http.StatusAccepted || revealedKind != target.kind || revealedTarget != target.path {
+			t.Fatalf("reveal = %d, %q, %q: %s", response.Code, revealedKind, revealedTarget, response.Body.String())
 		}
 	}
-	return true
+	response := serveJSONAuthorized(handler, http.MethodPost, "/v1/files/reveal", map[string]string{"kind": "select", "path": arbitrary})
+	if response.Code != http.StatusBadRequest || calls != 2 {
+		t.Fatalf("arbitrary reveal status = %d, calls = %d", response.Code, calls)
+	}
+	revealErr = errors.New("shell failure")
+	response = serveJSONAuthorized(handler, http.MethodPost, "/v1/files/reveal", map[string]string{"kind": "select", "path": recorded})
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), "reveal_failed") {
+		t.Fatalf("shell failure = %d: %s", response.Code, response.Body.String())
+	}
 }
 
 func TestProxySessionReuseAndPlaybackTokenRanges(t *testing.T) {

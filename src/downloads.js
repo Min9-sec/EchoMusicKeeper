@@ -1,5 +1,6 @@
 import { normalizeQuality, resolveKugouSource } from "./kugou-source.js";
 import { toHelperConfig } from "./config.js";
+import { createConfirmation } from "./ui/confirmation.js";
 import { createDownloadDialog } from "./ui/download-dialog.js";
 
 const STORAGE_KEY = "echo-music-keeper-downloads";
@@ -56,6 +57,7 @@ function helperTrack(track, source) {
 
 /** Owns persisted user-download records and routes exports through the helper. */
 export function createDownloadController(ctx, runtime, settingsRef, options = {}) {
+  const confirmation = createConfirmation(ctx);
   const records = ref(ctx, []);
   const pending = new Map();
   let activeDialog = null;
@@ -234,7 +236,8 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
 
   async function remove(entry) {
     await ready;
-    if (disposed || !entry?.path || !(await ctx?.dialog?.confirm?.({ title: "删除下载", content: "确定删除此下载文件吗？" }))) return false;
+    if (disposed || !entry?.path) return false;
+    if (!(await confirmation.confirm({ title: "删除下载", content: "确定删除此下载文件吗？" }))) return false;
     if (disposed) return false;
     const client = clientFor(runtime);
     if (!client?.deleteDownload) {
@@ -319,5 +322,5 @@ export function createDownloadController(ctx, runtime, settingsRef, options = {}
     }
   }
 
-  return Object.freeze({ request, remove, reveal, records, reconcile, reconcileTaskSnapshot, registerContextMenus, dispose() { disposed = true; activeDialog?.close?.(); activeDialog = null; unsubscribeSnapshots?.(); unsubscribeSnapshots = null; pending.clear(); } });
+  return Object.freeze({ request, remove, reveal, records, reconcile, reconcileTaskSnapshot, registerContextMenus, dispose() { disposed = true; confirmation.dispose(); activeDialog?.close?.(); activeDialog = null; unsubscribeSnapshots?.(); unsubscribeSnapshots = null; pending.clear(); } });
 }

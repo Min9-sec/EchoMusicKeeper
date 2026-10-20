@@ -5,13 +5,11 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -30,7 +28,7 @@ type ErrorResponse struct {
 	Message string `json:"message"`
 }
 
-type ProcessLauncher func(name string, args ...string) error
+type FileRevealer func(kind, target string) error
 
 type Options struct {
 	Token            string
@@ -40,7 +38,7 @@ type Options struct {
 	DefaultMusicPath string
 	Logger           *log.Logger
 	Shutdown         func()
-	LaunchProcess    ProcessLauncher
+	RevealFile       FileRevealer
 	HTTPClient       *http.Client
 }
 
@@ -55,19 +53,19 @@ type handler struct {
 	logger           *log.Logger
 	shutdown         func()
 	shutdownOnce     sync.Once
-	launch           ProcessLauncher
+	revealFile       FileRevealer
 	resolveCachePath func(string) (string, bool, error)
 }
 
 func New(options Options) http.Handler {
-	launch := options.LaunchProcess
-	if launch == nil {
-		launch = launchFileManager
+	reveal := options.RevealFile
+	if reveal == nil {
+		reveal = revealFile
 	}
 	return &handler{
 		tokenHash: sha256.Sum256([]byte(options.Token)), manager: options.Manager,
 		config: options.Config, version: options.Version, defaultMusicPath: options.DefaultMusicPath,
-		logger: options.Logger, shutdown: options.Shutdown, launch: launch,
+		logger: options.Logger, shutdown: options.Shutdown, revealFile: reveal,
 		resolveCachePath: options.Manager.PlaybackCachePath,
 	}
 }
@@ -488,12 +486,7 @@ func (server *handler) reveal(writer http.ResponseWriter, request *http.Request)
 		server.writeError(writer, http.StatusBadRequest, "reveal_forbidden", "path is not an exact managed target")
 		return
 	}
-	executable, args, err := revealCommand(body.Kind, target)
-	if err != nil {
-		server.internalError(writer, "reveal_failed", err)
-		return
-	}
-	if err := server.launch(executable, args...); err != nil {
+	if err := server.revealFile(body.Kind, target); err != nil {
 		server.internalError(writer, "reveal_failed", err)
 		return
 	}
@@ -637,32 +630,4 @@ func samePath(left, right string) bool {
 		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
 	}
 	return filepath.Clean(left) == filepath.Clean(right)
-}
-
-// revealCommand returns the platform file manager invocation that selects or
-// opens one already authorized target. Only platforms with a supported file
-// manager receive a command.
-func revealCommand(kind, target string) (string, []string, error) {
-	return revealCommandFor(runtime.GOOS, kind, target)
-}
-
-func revealCommandFor(goos, kind, target string) (string, []string, error) {
-	switch goos {
-	case "windows":
-		if kind == "select" {
-			return "explorer.exe", []string{"/select," + target}, nil
-		}
-		return "explorer.exe", []string{target}, nil
-	case "darwin":
-		if kind == "select" {
-			return "open", []string{"-R", target}, nil
-		}
-		return "open", []string{target}, nil
-	default:
-		return "", nil, fmt.Errorf("file manager reveal is only available on Windows and macOS")
-	}
-}
-
-func launchFileManager(name string, args ...string) error {
-	return exec.Command(name, args...).Start()
 }
