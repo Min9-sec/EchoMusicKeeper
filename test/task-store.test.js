@@ -258,8 +258,12 @@ test("management page only exposes download locations recorded by the helper", (
   };
   const outputPath = "D:\\Music\\Song.mp3";
   const task = {
-    id: "download-1", kind: "download", state: "completed", outputPath,
+    id: "download-1", kind: "download", state: "running", outputPath,
     pausable: true, track: { title: "Song", artist: "Artist", quality: "320" },
+  };
+  const finished = {
+    id: "download-done", kind: "download", state: "completed", outputPath,
+    pausable: true, track: { title: "Finished Song", artist: "Artist", quality: "320" },
   };
   const records = { value: [] };
   const component = createManagementPage({
@@ -267,15 +271,20 @@ test("management page only exposes download locations recorded by the helper", (
     vue: { h, ref: (value) => ({ value }), resolveComponent: () => "HostIcon", defineAsyncComponent: () => "HostButton" },
     ui: { components: { Button: async () => "HostButton" } },
   }, {
-    tasks: { value: [task] }, cacheEntries: { value: [] }, cacheStats: { value: { cacheBytes: 0, cacheLimitBytes: 1 } }, error: { value: null },
+    tasks: { value: [task, finished] }, cacheEntries: { value: [] }, cacheStats: { value: { cacheBytes: 0, cacheLimitBytes: 1 } }, error: { value: null },
     refresh: async () => {}, setVisible: () => {}, online: () => true,
   }, { records, reconcile: async () => {}, reveal: async () => {}, remove: async () => {} });
 
   const render = component.setup();
   assert.doesNotMatch(JSON.stringify(render()), /打开位置/);
+  assert.doesNotMatch(JSON.stringify(render()), /Finished Song/);
+  assert.doesNotMatch(JSON.stringify(render()), /is-completed/);
   records.value = [{ ...record, path: outputPath, missing: false }];
   const tree = render();
   assert.match(JSON.stringify(tree), /打开位置/);
+  assert.match(JSON.stringify(tree), /Song/);
+  assert.doesNotMatch(JSON.stringify(tree), /Finished Song/);
+  assert.doesNotMatch(JSON.stringify(tree), /is-completed/);
   const icons = nodes(tree).filter((node) => node.type === "HostIcon").map((node) => node.props);
   assert.equal(icons.some((props) => props.icon === "tabler:player-pause"), true);
   assert.equal(icons.some((props) => "name" in props), false);

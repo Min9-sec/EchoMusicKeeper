@@ -1,5 +1,7 @@
 import { createConfirmation } from "./confirmation.js";
 
+const FINISHED_TASK_STATES = new Set(["completed", "canceled"]);
+
 const bytes = (value) => {
   const amount = Number(value) || 0;
   if (amount < 1024) return `${amount} B`;
@@ -10,6 +12,11 @@ const bytes = (value) => {
   return `${current.toFixed(current >= 10 ? 0 : 1)} ${units[unit]}`;
 };
 const seconds = (value) => !Number.isFinite(value) || value < 0 ? "--" : `${Math.ceil(value / 60)} 分`;
+
+/** Progress rows for one task kind. Completed and canceled tasks leave the list. */
+function progressTasks(tasks, kind) {
+  return (Array.isArray(tasks) ? tasks : []).filter((task) => task?.kind === kind && !FINISHED_TASK_STATES.has(task?.state));
+}
 
 function hostComponent(ctx, name, fallback) {
   const loader = ctx?.ui?.components?.[name];
@@ -80,30 +87,38 @@ export function createManagementPage(ctx, taskStore, downloads) {
           command("删除下载", () => downloads.remove(entry), icons.remove),
         ]),
       ]);
-      return () => h("main", { class: "echo-music-keeper-page" }, [
-        h("nav", { class: "echo-music-keeper-tabs", "aria-label": "缓存管理" }, [tabButton("tasks", "下载任务"), tabButton("cache", "缓存管理")]),
-        loading.value ? h("p", { class: "echo-music-keeper-empty" }, "正在读取缓存状态…") : null,
-        taskStore.error.value === "helper-offline" ? h("p", { class: "echo-music-keeper-empty" }, "缓存服务未连接") : null,
-        taskStore.error.value === "directory-error" ? h("p", { class: "echo-music-keeper-empty" }, "缓存目录不可用") : null,
-        tab.value === "tasks" ? h("section", { class: "echo-music-keeper-section" }, [
-          h("ul", { class: "echo-music-keeper-task-list" }, taskStore.tasks.value.map(taskRow)),
-          !taskStore.tasks.value.length && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "暂无下载任务") : null,
-          h("h3", { class: "echo-music-keeper-subheading" }, "已完成下载"),
-          h("ul", { class: "echo-music-keeper-entry-list" }, downloads.records.value.filter((entry) => !entry.missing).map(downloadRow)),
-          !downloads.records.value.some((entry) => !entry.missing) && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "暂无已完成下载") : null,
-        ]) : h("section", { class: "echo-music-keeper-section" }, [
-          h("div", { class: "echo-music-keeper-cache-summary" }, [
-            h("div", { class: "echo-music-keeper-progress", style: { "--progress": `${Math.min(100, taskStore.cacheStats.value.cacheBytes / Math.max(1, taskStore.cacheStats.value.cacheLimitBytes) * 100)}%` } }),
-            h("span", `${bytes(taskStore.cacheStats.value.cacheBytes)} / ${bytes(taskStore.cacheStats.value.cacheLimitBytes)}`),
-            h(Button, { onClick: runAction(async () => { if (await confirm("确定清空所有未使用缓存吗？")) await taskStore.clearCache(); }) }, () => "清空缓存"),
+      return () => {
+        const downloadProgress = progressTasks(taskStore.tasks.value, "download");
+        const cacheProgress = progressTasks(taskStore.tasks.value, "cache");
+        return h("main", { class: "echo-music-keeper-page" }, [
+          h("nav", { class: "echo-music-keeper-tabs", "aria-label": "缓存管理" }, [tabButton("tasks", "下载任务"), tabButton("cache", "缓存管理")]),
+          loading.value ? h("p", { class: "echo-music-keeper-empty" }, "正在读取缓存状态…") : null,
+          taskStore.error.value === "helper-offline" ? h("p", { class: "echo-music-keeper-empty" }, "缓存服务未连接") : null,
+          taskStore.error.value === "directory-error" ? h("p", { class: "echo-music-keeper-empty" }, "缓存目录不可用") : null,
+          tab.value === "tasks" ? h("section", { class: "echo-music-keeper-section" }, [
+            h("ul", { class: "echo-music-keeper-task-list" }, downloadProgress.map(taskRow)),
+            !downloadProgress.length && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "暂无进行中的下载") : null,
+            h("h3", { class: "echo-music-keeper-subheading" }, "已完成下载"),
+            h("ul", { class: "echo-music-keeper-entry-list" }, downloads.records.value.filter((entry) => !entry.missing).map(downloadRow)),
+            !downloads.records.value.some((entry) => !entry.missing) && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "暂无已完成下载") : null,
+          ]) : h("section", { class: "echo-music-keeper-section" }, [
+            h("div", { class: "echo-music-keeper-cache-summary" }, [
+              h("div", { class: "echo-music-keeper-progress", style: { "--progress": `${Math.min(100, taskStore.cacheStats.value.cacheBytes / Math.max(1, taskStore.cacheStats.value.cacheLimitBytes) * 100)}%` } }),
+              h("span", `${bytes(taskStore.cacheStats.value.cacheBytes)} / ${bytes(taskStore.cacheStats.value.cacheLimitBytes)}`),
+              h(Button, { onClick: runAction(async () => { if (await confirm("确定清空所有未使用缓存吗？")) await taskStore.clearCache(); }) }, () => "清空缓存"),
+            ]),
+            ...(cacheProgress.length ? [
+              h("h3", { class: "echo-music-keeper-subheading" }, "缓存进度"),
+              h("ul", { class: "echo-music-keeper-task-list echo-music-keeper-cache-progress" }, cacheProgress.map(taskRow)),
+            ] : []),
+            h("ul", { class: "echo-music-keeper-entry-list" }, taskStore.cacheEntries.value.map((entry) => h("li", { class: "echo-music-keeper-entry", key: entry.key }, [
+              h("div", [h("strong", entry.track?.title || entry.key), h("span", `${entry.track?.artist || ""} · ${bytes(entry.size)}`)]),
+              h("div", { class: "echo-music-keeper-task__actions" }, [command("删除缓存", async () => { if (await confirm("确定删除此缓存吗？")) await taskStore.deleteCache(entry); }, icons.remove)]),
+            ]))),
+            !taskStore.cacheEntries.value.length && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "暂无完整缓存") : null,
           ]),
-          h("ul", { class: "echo-music-keeper-entry-list" }, taskStore.cacheEntries.value.map((entry) => h("li", { class: "echo-music-keeper-entry", key: entry.key }, [
-            h("div", [h("strong", entry.track?.title || entry.key), h("span", `${entry.track?.artist || ""} · ${bytes(entry.size)}`)]),
-            h("div", { class: "echo-music-keeper-task__actions" }, [command("删除缓存", async () => { if (await confirm("确定删除此缓存吗？")) await taskStore.deleteCache(entry); }, icons.remove)]),
-          ]))),
-          !taskStore.cacheEntries.value.length && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "暂无完整缓存") : null,
-        ]),
-      ]);
+        ]);
+      };
     },
   };
 }
