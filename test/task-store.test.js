@@ -258,7 +258,7 @@ test("management page only exposes download locations recorded by the helper", (
   };
   const outputPath = "D:\\Music\\Song.mp3";
   const task = {
-    id: "download-1", kind: "download", state: "completed", outputPath,
+    id: "download-1", kind: "download", state: "running", outputPath,
     pausable: true, track: { title: "Song", artist: "Artist", quality: "320" },
   };
   const records = { value: [] };

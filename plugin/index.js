@@ -1655,7 +1655,6 @@ function createManagementPage(ctx, taskStore, downloads) {
       const taskRow = (task) => {
         const progress = task.totalBytes > 0 ? Math.min(100, Math.round((task.downloadedBytes || 0) / task.totalBytes * 100)) : 0;
         const remaining = task.bytesPerSecond > 0 && task.totalBytes > 0 ? (task.totalBytes - task.downloadedBytes) / task.bytesPerSecond : NaN;
-        const completedDownload = task.outputPath ? downloads.records.value.find((entry) => entry.path === task.outputPath && !entry.missing) : null;
         return h("li", { class: "echo-music-keeper-task", key: task.id }, [
           h("div", { class: "echo-music-keeper-task__song" }, [h("strong", task.track?.title || "\u672A\u77E5\u6B4C\u66F2"), h("span", `${task.track?.artist || "\u672A\u77E5\u827A\u4EBA"} \xB7 ${task.track?.quality || "--"}`)]),
           h("div", { class: "echo-music-keeper-task__progress" }, [h("div", { class: "echo-music-keeper-progress", style: { "--progress": `${progress}%` } }), h("span", `${progress}%`)]),
@@ -1665,8 +1664,7 @@ function createManagementPage(ctx, taskStore, downloads) {
           h("div", { class: "echo-music-keeper-task__actions" }, [
             task.pausable ? command(task.state === "paused" ? "\u7EE7\u7EED" : "\u6682\u505C", () => task.state === "paused" ? taskStore.resume(task) : taskStore.pause(task), task.state === "paused" ? icons.play : icons.pause) : null,
             task.cancelable ? command("\u53D6\u6D88", () => taskStore.cancel(task), icons.cancel) : null,
-            task.retryable || task.state === "failed" ? command("\u91CD\u8BD5", () => taskStore.retry(task), icons.retry) : null,
-            completedDownload ? command("\u6253\u5F00\u4F4D\u7F6E", () => downloads.reveal(completedDownload), icons.reveal) : null
+            task.retryable || task.state === "failed" ? command("\u91CD\u8BD5", () => taskStore.retry(task), icons.retry) : null
           ])
         ]);
       };
@@ -1677,14 +1675,15 @@ function createManagementPage(ctx, taskStore, downloads) {
           command("\u5220\u9664\u4E0B\u8F7D", () => downloads.remove(entry), icons.remove)
         ])
       ]);
+      const visibleTasks = (kind) => taskStore.tasks.value.filter((task) => task.kind === kind && task.state !== "completed" && task.state !== "canceled");
       return () => h("main", { class: "echo-music-keeper-page" }, [
         h("nav", { class: "echo-music-keeper-tabs", "aria-label": "\u7F13\u5B58\u7BA1\u7406" }, [tabButton("tasks", "\u4E0B\u8F7D\u4EFB\u52A1"), tabButton("cache", "\u7F13\u5B58\u7BA1\u7406")]),
         loading.value ? h("p", { class: "echo-music-keeper-empty" }, "\u6B63\u5728\u8BFB\u53D6\u7F13\u5B58\u72B6\u6001\u2026") : null,
         taskStore.error.value === "helper-offline" ? h("p", { class: "echo-music-keeper-empty" }, "\u7F13\u5B58\u670D\u52A1\u672A\u8FDE\u63A5") : null,
         taskStore.error.value === "directory-error" ? h("p", { class: "echo-music-keeper-empty" }, "\u7F13\u5B58\u76EE\u5F55\u4E0D\u53EF\u7528") : null,
         tab.value === "tasks" ? h("section", { class: "echo-music-keeper-section" }, [
-          h("ul", { class: "echo-music-keeper-task-list" }, taskStore.tasks.value.map(taskRow)),
-          !taskStore.tasks.value.length && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "\u6682\u65E0\u4E0B\u8F7D\u4EFB\u52A1") : null,
+          h("ul", { class: "echo-music-keeper-task-list" }, visibleTasks("download").map(taskRow)),
+          !visibleTasks("download").length && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "\u6682\u65E0\u4E0B\u8F7D\u4EFB\u52A1") : null,
           h("h3", { class: "echo-music-keeper-subheading" }, "\u5DF2\u5B8C\u6210\u4E0B\u8F7D"),
           h("ul", { class: "echo-music-keeper-entry-list" }, downloads.records.value.filter((entry) => !entry.missing).map(downloadRow)),
           !downloads.records.value.some((entry) => !entry.missing) && !loading.value ? h("p", { class: "echo-music-keeper-empty" }, "\u6682\u65E0\u5DF2\u5B8C\u6210\u4E0B\u8F7D") : null
@@ -1696,6 +1695,11 @@ function createManagementPage(ctx, taskStore, downloads) {
               if (await confirm("\u786E\u5B9A\u6E05\u7A7A\u6240\u6709\u672A\u4F7F\u7528\u7F13\u5B58\u5417\uFF1F")) await taskStore.clearCache();
             }) }, () => "\u6E05\u7A7A\u7F13\u5B58")
           ]),
+          visibleTasks("cache").length ? h("div", { class: "echo-music-keeper-cache-tasks" }, [
+            h("h3", { class: "echo-music-keeper-subheading" }, "\u7F13\u5B58\u4EFB\u52A1"),
+            h("ul", { class: "echo-music-keeper-task-list" }, visibleTasks("cache").map(taskRow)),
+            h("h3", { class: "echo-music-keeper-subheading" }, "\u5DF2\u7F13\u5B58\u6B4C\u66F2")
+          ]) : null,
           h("ul", { class: "echo-music-keeper-entry-list" }, taskStore.cacheEntries.value.map((entry) => h("li", { class: "echo-music-keeper-entry", key: entry.key }, [
             h("div", [h("strong", entry.track?.title || entry.key), h("span", `${entry.track?.artist || ""} \xB7 ${bytes(entry.size)}`)]),
             h("div", { class: "echo-music-keeper-task__actions" }, [command("\u5220\u9664\u7F13\u5B58", async () => {
